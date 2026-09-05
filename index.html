@@ -113,11 +113,6 @@ function pickByNorm(rawObj, patterns) {
 
 // Converte uma linha crua vinda da planilha (chaves = cabeçalhos exatos)
 // para o formato interno "limpo" que o app usa.
-function parseBool_(v) {
-  const s = String(v ?? "").trim().toLowerCase();
-  return s === "sim" || s === "true" || s === "verdadeiro" || s === "1";
-}
-
 function sheetToProduct(row) {
   return {
     id: pickByNorm(row, ["id"]) || uid(),
@@ -136,8 +131,37 @@ function sheetToProduct(row) {
       .split(/\r?\n|,\s*(?=https?:\/\/)/)
       .map((s) => s.trim())
       .filter(Boolean),
-    sobEncomenda: parseBool_(pickByNorm(row, ["sob encomenda"])),
   };
+}
+
+function sheetToEncomenda(row) {
+  return {
+    id: pickByNorm(row, ["id"]) || uid(),
+    nome: String(pickByNorm(row, ["nome do produto", "nome"]) || ""),
+    versao: String(pickByNorm(row, ["versao"]) || ""),
+    temporada: String(pickByNorm(row, ["temporada"]) || ""),
+    preco: Number(pickByNorm(row, ["preco de venda", "preco"])) || 0,
+    imagens: String(pickByNorm(row, ["imagem", "imagens", "foto", "fotos"]) || "")
+      .split(/\r?\n|,\s*(?=https?:\/\/)/)
+      .map((s) => s.trim())
+      .filter(Boolean),
+  };
+}
+
+const ENCOMENDA_FALLBACK_HEADERS = ["ID", "Nome do Produto", "Versão", "Temporada", "Preço de Venda (R$)", "Imagem"];
+
+function encomendaToSheetRow(p, headers) {
+  const data = {};
+  headers.forEach((h) => {
+    const n = normKey(h);
+    if (n === "id") return;
+    if (n.startsWith("nome")) data[h] = p.nome;
+    else if (n.startsWith("versao")) data[h] = p.versao;
+    else if (n.startsWith("temporada")) data[h] = p.temporada;
+    else if (n.startsWith("preco")) data[h] = p.preco;
+    else if (n.startsWith("imagem") || n.startsWith("foto")) data[h] = (p.imagens || []).join("\n");
+  });
+  return data;
 }
 
 function sheetToMovement(row) {
@@ -157,7 +181,7 @@ function sheetToMovement(row) {
 const FALLBACK_HEADERS = [
   "ID", "Nome do Produto", "Tamanho", "Categoria", "Versão", "Campeonato",
   "Genêro", "Temporada", "Custo (R$)", "Preço de Venda (R$)", "Estoque Atual", "Estoque Minímo",
-  "Imagem", "Sob Encomenda",
+  "Imagem",
 ];
 
 // Converte o produto "limpo" de volta para o formato de linha da planilha,
@@ -179,7 +203,6 @@ function productToSheetRow(p, headers) {
     else if (n.startsWith("estoque min")) data[h] = p.estoqueMinimo;
     else if (n.startsWith("estoque")) data[h] = p.estoque;
     else if (n.startsWith("imagem") || n.startsWith("foto")) data[h] = (p.imagens || []).join("\n");
-    else if (n.startsWith("sob encomenda")) data[h] = p.sobEncomenda ? "Sim" : "";
   });
   return data;
 }
@@ -212,13 +235,21 @@ const emptyProduct = {
   estoque: "",
   estoqueMinimo: "",
   imagens: [],
-  sobEncomenda: false,
+};
+
+const emptyEncomenda = {
+  nome: "",
+  versao: "",
+  temporada: "",
+  preco: "",
+  imagens: [],
 };
 
 function ControleEstoque() {
   const [tab, setTab] = useState("produtos");
   const [products, setProducts] = useState([]);
   const [movements, setMovements] = useState([]);
+  const [encomendas, setEncomendas] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [offline, setOffline] = useState(false);
@@ -229,12 +260,19 @@ function ControleEstoque() {
   const [form, setForm] = useState(emptyProduct);
   const [confirmDelete, setConfirmDelete] = useState(null);
 
+  const [modalEncomenda, setModalEncomenda] = useState(null);
+  const [encForm, setEncForm] = useState(emptyEncomenda);
+  const [confirmDeleteEnc, setConfirmDeleteEnc] = useState(null);
+  const [catalogView, setCatalogView] = useState("disponivel"); // "disponivel" | "encomenda"
+
   const [movForm, setMovForm] = useState({ produtoId: "", tipo: "entrada", quantidade: "", observacao: "" });
   const [importPending, setImportPending] = useState(null);
 
   const importRef = useRef(null);
   const fileRef = useRef(null);
+  const encFileRef = useRef(null);
   const headersRef = useRef(FALLBACK_HEADERS);
+  const encHeadersRef = useRef(ENCOMENDA_FALLBACK_HEADERS);
   const [uploadingImg, setUploadingImg] = useState(false);
   const [gerandoImagem, setGerandoImagem] = useState(false);
   const catalogRef = useRef(null);
@@ -245,13 +283,16 @@ function ControleEstoque() {
       const raw = await gasGet();
       const rawProducts = Array.isArray(raw.products) ? raw.products : [];
       const rawMovements = Array.isArray(raw.movements) ? raw.movements : [];
+      const rawEncomendas = Array.isArray(raw.encomendas) ? raw.encomendas : [];
       if (rawProducts[0]) headersRef.current = Object.keys(rawProducts[0]);
+      if (rawEncomendas[0]) encHeadersRef.current = Object.keys(rawEncomendas[0]);
       setProducts(rawProducts.map(sheetToProduct));
       setMovements(
         rawMovements
           .map(sheetToMovement)
           .sort((a, b) => new Date(b.data) - new Date(a.data))
       );
+      setEncomendas(rawEncomendas.map(sheetToEncomenda));
       setOffline(false);
     } catch (e) {
       setOffline(true);
@@ -307,7 +348,7 @@ function ControleEstoque() {
       nome: p.nome, tamanho: p.tamanho || "", categoria: p.categoria || "", versao: p.versao || "",
       campeonato: p.campeonato || "", genero: p.genero || "", temporada: p.temporada || "",
       custo: p.custo, preco: p.preco, estoque: p.estoque, estoqueMinimo: p.estoqueMinimo ?? "",
-      imagens: Array.isArray(p.imagens) ? p.imagens : [], sobEncomenda: !!p.sobEncomenda,
+      imagens: Array.isArray(p.imagens) ? p.imagens : [],
     });
     setModalProduct(p);
   }
@@ -353,7 +394,6 @@ function ControleEstoque() {
       estoque: Number(form.estoque) || 0,
       estoqueMinimo: Number(form.estoqueMinimo) || 0,
       imagens: form.imagens || [],
-      sobEncomenda: !!form.sobEncomenda,
     };
     const id = modalProduct && modalProduct.id ? modalProduct.id : uid();
     setSyncing(true);
@@ -389,6 +429,84 @@ function ControleEstoque() {
     const tipo = delta > 0 ? "entrada" : "saida";
     if (tipo === "saida" && p.estoque <= 0) return;
     registerMovement(p.id, p.nome, tipo, qty, "Ajuste rápido");
+  }
+
+  // ---------- Sob Encomenda ----------
+
+  function openNewEncomenda() {
+    setEncForm(emptyEncomenda);
+    setModalEncomenda({});
+  }
+  function openEditEncomenda(item) {
+    setEncForm({
+      nome: item.nome, versao: item.versao || "", temporada: item.temporada || "",
+      preco: item.preco, imagens: Array.isArray(item.imagens) ? item.imagens : [],
+    });
+    setModalEncomenda(item);
+  }
+  function closeEncModal() {
+    setModalEncomenda(null);
+    setEncForm(emptyEncomenda);
+  }
+
+  async function handleAddImageEnc(file) {
+    if (!file) return;
+    setUploadingImg(true);
+    try {
+      const dataUrl = await resizeImage(file);
+      const res = await gasPost({ action: "uploadImage", base64: dataUrl, mimeType: "image/jpeg", filename: uid() + ".jpg" });
+      if (res && res.ok && res.url) {
+        setEncForm((f) => ({ ...f, imagens: [...(f.imagens || []), res.url] }));
+      } else {
+        showToast("Não consegui salvar a imagem no Drive", "erro");
+      }
+    } catch (e) {
+      showToast("Não foi possível enviar a imagem", "erro");
+    }
+    setUploadingImg(false);
+  }
+
+  function removeImageAtEnc(index) {
+    setEncForm((f) => ({ ...f, imagens: (f.imagens || []).filter((_, i) => i !== index) }));
+  }
+
+  async function saveEncomenda(e) {
+    e.preventDefault();
+    if (!encForm.nome.trim()) { showToast("Informe o nome do produto", "erro"); return; }
+    const clean = {
+      nome: encForm.nome.trim(),
+      versao: encForm.versao.trim(),
+      temporada: encForm.temporada.trim(),
+      preco: Number(encForm.preco) || 0,
+      imagens: encForm.imagens || [],
+    };
+    const id = modalEncomenda && modalEncomenda.id ? modalEncomenda.id : uid();
+    setSyncing(true);
+    try {
+      const data = encomendaToSheetRow(clean, encHeadersRef.current);
+      await gasPost({ action: "upsertEncomenda", id, data });
+      showToast(modalEncomenda && modalEncomenda.id ? "Item atualizado" : "Item cadastrado");
+      closeEncModal();
+      await carregarDados(false);
+    } catch (err) {
+      showToast("Não consegui salvar na planilha", "erro");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  async function removeEncomenda(id) {
+    setSyncing(true);
+    try {
+      await gasPost({ action: "deleteEncomenda", id });
+      setConfirmDeleteEnc(null);
+      showToast("Item removido");
+      await carregarDados(false);
+    } catch (err) {
+      showToast("Não consegui remover na planilha", "erro");
+    } finally {
+      setSyncing(false);
+    }
   }
 
   async function registerMovement(produtoId, produtoNome, tipo, quantidade, observacao) {
@@ -429,15 +547,25 @@ function ControleEstoque() {
     return [p.versao, p.campeonato, p.genero, p.temporada].filter(Boolean).join(" · ");
   }
 
-  // No Catálogo (visão do cliente), produtos Sob Encomenda mostram só
-  // versão + temporada — o resto (tamanho, campeonato, gênero) não ajuda
-  // o cliente a identificar o produto nesse caso.
+  // No Catálogo (visão do cliente), itens Sob Encomenda mostram só
+  // versão + temporada — o resto (tamanho, campeonato, gênero) não existe
+  // pra esses itens, que vêm de uma aba própria e mais simples.
   function metaLineCatalogo(p) {
     if (p.sobEncomenda) return [p.versao, p.temporada].filter(Boolean).join(" · ");
     return metaLine(p);
   }
 
-  const disponiveis = products.filter((p) => Number(p.estoque) > 0 || p.sobEncomenda);
+  // "Disponível agora" = produtos normais com estoque > 0.
+  // "Sob encomenda" = itens da aba própria "Sob Encomenda" (sem controle de estoque).
+  const produtosDisponiveis = useMemo(
+    () => products.filter((p) => Number(p.estoque) > 0).map((p) => ({ ...p, sobEncomenda: false })),
+    [products]
+  );
+  const itensSobEncomenda = useMemo(
+    () => encomendas.map((e) => ({ ...e, sobEncomenda: true, estoque: 0, tamanho: "", categoria: "", campeonato: "", genero: "" })),
+    [encomendas]
+  );
+  const disponiveis = catalogView === "encomenda" ? itensSobEncomenda : produtosDisponiveis;
 
   function loadHtml2Canvas() {
     if (window.html2canvas) return Promise.resolve();
@@ -457,16 +585,64 @@ function ControleEstoque() {
     });
   }
 
+  const BLANK_PIXEL =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
+  function imageToDataUrl(url) {
+    return fetch(url, { mode: "cors" })
+      .then((res) => {
+        if (!res.ok) throw new Error("fetch falhou");
+        return res.blob();
+      })
+      .then(
+        (blob) =>
+          new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          })
+      );
+  }
+
   async function compartilharCatalogoImagem() {
     if (!catalogRef.current || disponiveis.length === 0) return;
     setGerandoImagem(true);
+    const imgEls = Array.from(catalogRef.current.querySelectorAll("img"));
+    const originais = imgEls.map((el) => el.getAttribute("src"));
+    let algumaFalhou = false;
     try {
+      // Troca cada foto (hospedada no Drive) por uma cópia embutida (data URL),
+      // porque o navegador não consegue "ler" pixels de imagens de outro domínio
+      // sem isso — e sem essa troca o PNG final sai corrompido/em branco.
+      await Promise.all(
+        imgEls.map(async (el, i) => {
+          const src = originais[i];
+          if (!src || src.startsWith("data:")) return;
+          try {
+            const dataUrl = await imageToDataUrl(src);
+            el.setAttribute("src", dataUrl);
+          } catch (e) {
+            algumaFalhou = true;
+            el.setAttribute("src", BLANK_PIXEL);
+          }
+        })
+      );
+
       await loadHtml2Canvas();
       const canvas = await window.html2canvas(catalogRef.current, {
         backgroundColor: "#0E0C09",
         scale: 2,
         useCORS: true,
       });
+
+      // restaura as fotos originais na tela (o print já foi tirado)
+      imgEls.forEach((el, i) => { if (originais[i]) el.setAttribute("src", originais[i]); });
+
+      if (algumaFalhou) {
+        showToast("Algumas fotos não puderam entrar na imagem — o resto saiu normal", "erro");
+      }
+
       canvas.toBlob(async (blob) => {
         if (!blob) { showToast("Não consegui gerar a imagem", "erro"); setGerandoImagem(false); return; }
         const file = new File([blob], "catalogo-1971-sportswear.png", { type: "image/png" });
@@ -490,6 +666,7 @@ function ControleEstoque() {
         setGerandoImagem(false);
       }, "image/png");
     } catch (e) {
+      imgEls.forEach((el, i) => { if (originais[i]) el.setAttribute("src", originais[i]); });
       showToast("Não consegui gerar a imagem do catálogo", "erro");
       setGerandoImagem(false);
     }
@@ -504,7 +681,8 @@ function ControleEstoque() {
         : `${p.tamanho ? " (" + p.tamanho + ")" : ""}${p.categoria ? " — " + p.categoria : ""}`;
       return `• ${p.nome}${tamanhoECategoria}${extra ? " — " + extra : ""} — ${BRL(p.preco)} — ${disponibilidade}`;
     });
-    const texto = `Produtos disponíveis:\n\n${linhas.join("\n")}`;
+    const titulo = catalogView === "encomenda" ? "Sob encomenda:" : "Produtos disponíveis:";
+    const texto = `${titulo}\n\n${linhas.join("\n")}`;
     if (navigator.clipboard?.writeText) {
       navigator.clipboard.writeText(texto).then(
         () => showToast("Catálogo copiado — cole no WhatsApp ou e-mail"),
@@ -742,6 +920,9 @@ function ControleEstoque() {
           <button className={`est-tab ${tab === "movimentos" ? "active" : ""}`} onClick={() => setTab("movimentos")}>
             <History size={15} /> Movimentações
           </button>
+          <button className={`est-tab ${tab === "encomendas" ? "active" : ""}`} onClick={() => setTab("encomendas")}>
+            <Package size={15} /> Sob Encomenda
+          </button>
           <button className={`est-tab ${tab === "catalogo" ? "active" : ""}`} onClick={() => setTab("catalogo")}>
             <Send size={15} /> Catálogo
           </button>
@@ -822,13 +1003,9 @@ function ControleEstoque() {
                         <span className="est-margin">{margem.toFixed(0)}% margem</span>
                       </div>
                       <div className="est-card-row">
-                        {p.sobEncomenda ? (
-                          <span className="est-badge est-badge-encomenda">Sob encomenda</span>
-                        ) : (
-                          <span className={`est-badge ${baixo ? "est-badge-low" : "est-badge-ok"}`}>
-                            {p.estoque} em estoque
-                          </span>
-                        )}
+                        <span className={`est-badge ${baixo ? "est-badge-low" : "est-badge-ok"}`}>
+                          {p.estoque} em estoque
+                        </span>
                         <div className="est-stepper">
                           <button className="est-icon-btn" onClick={() => quickAdjust(p, -1)} title="Registrar saída"><ArrowDownCircle size={15} /></button>
                           <button className="est-icon-btn" onClick={() => quickAdjust(p, 1)} title="Registrar entrada"><ArrowUpCircle size={15} /></button>
@@ -894,10 +1071,61 @@ function ControleEstoque() {
         </>
       )}
 
+      {tab === "encomendas" && (
+        <>
+          <div className="est-toolbar">
+            <div className="est-sub" style={{ marginTop: 0 }}>Itens sem controle de estoque — só foto, versão, temporada e preço</div>
+            <button className="est-btn est-btn-primary" onClick={openNewEncomenda}><Plus size={15} /> Novo item</button>
+          </div>
+
+          {encomendas.length === 0 ? (
+            <div className="est-empty"><Package size={30} style={{ marginBottom: 8, opacity: 0.5 }} />Nenhum item sob encomenda cadastrado ainda.</div>
+          ) : (
+            <div className="est-grid">
+              {encomendas.map((item) => (
+                <div className="est-card" key={item.id}>
+                  <div className="est-card-img">
+                    {item.imagens && item.imagens[0] ? (
+                      <>
+                        <img src={item.imagens[0]} alt={item.nome} />
+                        {item.imagens.length > 1 && <span className="est-photo-count">+{item.imagens.length - 1}</span>}
+                      </>
+                    ) : <ImagePlus size={26} />}
+                  </div>
+                  <div className="est-card-body">
+                    <div className="est-card-name">{item.nome}</div>
+                    {[item.versao, item.temporada].filter(Boolean).join(" · ") && (
+                      <div className="est-card-meta">{[item.versao, item.temporada].filter(Boolean).join(" · ")}</div>
+                    )}
+                    <div className="est-card-row">
+                      <span className="est-price">{BRL(item.preco)}</span>
+                    </div>
+                    <div className="est-card-actions">
+                      <button className="est-icon-btn" onClick={() => openEditEncomenda(item)}><Pencil size={14} /></button>
+                      <button className="est-icon-btn danger" onClick={() => setConfirmDeleteEnc(item)}><Trash2 size={14} /></button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
       {tab === "catalogo" && (
         <>
+          <div className="est-toggle" style={{ marginBottom: 14, maxWidth: 360 }}>
+            <button type="button" className={catalogView === "disponivel" ? "on entrada" : ""} onClick={() => setCatalogView("disponivel")}>
+              Disponível agora
+            </button>
+            <button type="button" className={catalogView === "encomenda" ? "on entrada" : ""} onClick={() => setCatalogView("encomenda")}>
+              Sob encomenda
+            </button>
+          </div>
           <div className="est-catalog-head">
-            <div className="est-sub" style={{ marginTop: 0 }}>{disponiveis.length} produto(s) disponível(is) para envio</div>
+            <div className="est-sub" style={{ marginTop: 0 }}>
+              {disponiveis.length} {catalogView === "encomenda" ? "item(ns) sob encomenda" : "produto(s) disponível(is)"} para envio
+            </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button className="est-btn est-btn-ghost" onClick={copiarCatalogo}><Copy size={15} /> Copiar lista (texto)</button>
               <button className="est-btn est-btn-primary" onClick={compartilharCatalogoImagem} disabled={gerandoImagem || disponiveis.length === 0}>
@@ -906,7 +1134,10 @@ function ControleEstoque() {
             </div>
           </div>
           {disponiveis.length === 0 ? (
-            <div className="est-empty"><ShoppingBag size={28} style={{ marginBottom: 8, opacity: 0.5 }} />Nenhum produto disponível no momento.</div>
+            <div className="est-empty">
+              <ShoppingBag size={28} style={{ marginBottom: 8, opacity: 0.5 }} />
+              {catalogView === "encomenda" ? "Nenhum item sob encomenda no momento." : "Nenhum produto disponível no momento."}
+            </div>
           ) : (
             <div className="est-grid" ref={catalogRef}>
               {disponiveis.map((p) => (
@@ -959,16 +1190,6 @@ function ControleEstoque() {
                   </div>
                 </div>
                 <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => { handleAddImage(e.target.files?.[0]); e.target.value = ""; }} />
-              </div>
-              <div className="est-field">
-                <label className="est-checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={!!form.sobEncomenda}
-                    onChange={(e) => setForm((f) => ({ ...f, sobEncomenda: e.target.checked }))}
-                  />
-                  Sob encomenda (sem controle de estoque — só a foto e o preço)
-                </label>
               </div>
               <div className="est-field">
                 <label>Nome do produto</label>
@@ -1026,18 +1247,16 @@ function ControleEstoque() {
                   {"  ·  "}Margem: <strong>{(((Number(form.preco) - Number(form.custo || 0)) / Number(form.preco)) * 100).toFixed(1)}%</strong>
                 </div>
               )}
-              {!form.sobEncomenda && (
-                <div className="est-row2">
-                  <div className="est-field">
-                    <label>Estoque atual</label>
-                    <input type="number" min="0" value={form.estoque} onChange={(e) => setForm((f) => ({ ...f, estoque: e.target.value }))} />
-                  </div>
-                  <div className="est-field">
-                    <label>Estoque mínimo</label>
-                    <input type="number" min="0" value={form.estoqueMinimo} onChange={(e) => setForm((f) => ({ ...f, estoqueMinimo: e.target.value }))} placeholder="Alerta" />
-                  </div>
+              <div className="est-row2">
+                <div className="est-field">
+                  <label>Estoque atual</label>
+                  <input type="number" min="0" value={form.estoque} onChange={(e) => setForm((f) => ({ ...f, estoque: e.target.value }))} />
                 </div>
-              )}
+                <div className="est-field">
+                  <label>Estoque mínimo</label>
+                  <input type="number" min="0" value={form.estoqueMinimo} onChange={(e) => setForm((f) => ({ ...f, estoqueMinimo: e.target.value }))} placeholder="Alerta" />
+                </div>
+              </div>
               <div className="est-modal-actions">
                 <button type="button" className="est-btn est-btn-ghost" onClick={closeModal}>Cancelar</button>
                 <button type="submit" className="est-btn est-btn-primary" disabled={syncing}><Check size={15} /> Salvar</button>
@@ -1057,6 +1276,71 @@ function ControleEstoque() {
             <div className="est-modal-actions">
               <button className="est-btn est-btn-ghost" onClick={() => setConfirmDelete(null)}>Cancelar</button>
               <button className="est-btn est-btn-primary" style={{ background: "var(--danger)", color: "#fff" }} onClick={() => removeProduct(confirmDelete.id)}>
+                <Trash2 size={15} /> Remover
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modalEncomenda !== null && (
+        <div className="est-modal-overlay" onClick={closeEncModal}>
+          <div className="est-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>{modalEncomenda.id ? "Editar item sob encomenda" : "Novo item sob encomenda"}</h3>
+            <form onSubmit={saveEncomenda}>
+              <div className="est-field">
+                <label>Fotos do produto</label>
+                <div className="est-gallery">
+                  {(encForm.imagens || []).map((url, i) => (
+                    <div className="est-gallery-thumb" key={i}>
+                      <img src={url} alt="" />
+                      <button type="button" className="est-gallery-remove" onClick={() => removeImageAtEnc(i)}><X size={11} /></button>
+                    </div>
+                  ))}
+                  <div className="est-gallery-add" onClick={() => !uploadingImg && encFileRef.current?.click()}>
+                    {uploadingImg ? <Loader2 className="spin" size={18} /> : <ImagePlus size={18} />}
+                    <span>{uploadingImg ? "Enviando…" : "Adicionar"}</span>
+                  </div>
+                </div>
+                <input ref={encFileRef} type="file" accept="image/*" hidden onChange={(e) => { handleAddImageEnc(e.target.files?.[0]); e.target.value = ""; }} />
+              </div>
+              <div className="est-field">
+                <label>Nome do produto</label>
+                <input value={encForm.nome} onChange={(e) => setEncForm((f) => ({ ...f, nome: e.target.value }))} placeholder="Ex: Camisa Retrô França 98" required />
+              </div>
+              <div className="est-row2">
+                <div className="est-field">
+                  <label>Versão do produto</label>
+                  <input value={encForm.versao} onChange={(e) => setEncForm((f) => ({ ...f, versao: e.target.value }))} placeholder="Ex: Retrô / 1998" />
+                </div>
+                <div className="est-field">
+                  <label>Temporada</label>
+                  <input value={encForm.temporada} onChange={(e) => setEncForm((f) => ({ ...f, temporada: e.target.value }))} placeholder="Ex: 1998" />
+                </div>
+              </div>
+              <div className="est-field">
+                <label>Preço de venda (R$)</label>
+                <input type="number" step="0.01" min="0" value={encForm.preco} onChange={(e) => setEncForm((f) => ({ ...f, preco: e.target.value }))} />
+              </div>
+              <div className="est-modal-actions">
+                <button type="button" className="est-btn est-btn-ghost" onClick={closeEncModal}>Cancelar</button>
+                <button type="submit" className="est-btn est-btn-primary" disabled={syncing}><Check size={15} /> Salvar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {confirmDeleteEnc && (
+        <div className="est-modal-overlay" onClick={() => setConfirmDeleteEnc(null)}>
+          <div className="est-modal" style={{ width: 340 }} onClick={(e) => e.stopPropagation()}>
+            <h3>Remover item?</h3>
+            <p style={{ fontSize: 14, color: "var(--ink-soft)" }}>
+              "{confirmDeleteEnc.nome}" será removido da aba Sob Encomenda. Essa ação não pode ser desfeita.
+            </p>
+            <div className="est-modal-actions">
+              <button className="est-btn est-btn-ghost" onClick={() => setConfirmDeleteEnc(null)}>Cancelar</button>
+              <button className="est-btn est-btn-primary" style={{ background: "var(--danger)", color: "#fff" }} onClick={() => removeEncomenda(confirmDeleteEnc.id)}>
                 <Trash2 size={15} /> Remover
               </button>
             </div>

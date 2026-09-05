@@ -69,11 +69,6 @@ function pickByNorm(rawObj, patterns) {
   return "";
 }
 
-function parseBool_(v) {
-  const s = String(v ?? "").trim().toLowerCase();
-  return s === "sim" || s === "true" || s === "verdadeiro" || s === "1";
-}
-
 function sheetToProduct(row) {
   return {
     id: pickByNorm(row, ["id"]) || Math.random().toString(36),
@@ -90,31 +85,53 @@ function sheetToProduct(row) {
       .split(/\r?\n|,\s*(?=https?:\/\/)/)
       .map((s) => s.trim())
       .filter(Boolean),
-    sobEncomenda: parseBool_(pickByNorm(row, ["sob encomenda"])),
+  };
+}
+
+function sheetToEncomenda(row) {
+  return {
+    id: pickByNorm(row, ["id"]) || Math.random().toString(36),
+    nome: String(pickByNorm(row, ["nome do produto", "nome"]) || ""),
+    versao: String(pickByNorm(row, ["versao"]) || ""),
+    temporada: String(pickByNorm(row, ["temporada"]) || ""),
+    preco: Number(pickByNorm(row, ["preco de venda", "preco"])) || 0,
+    imagens: String(pickByNorm(row, ["imagem", "imagens", "foto", "fotos"]) || "")
+      .split(/\r?\n|,\s*(?=https?:\/\/)/)
+      .map((s) => s.trim())
+      .filter(Boolean),
   };
 }
 
 function CatalogoPublico() {
   const [products, setProducts] = useState([]);
+  const [encomendas, setEncomendas] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [erro, setErro] = useState(false);
   const [search, setSearch] = useState("");
+  const [view, setView] = useState("disponivel"); // "disponivel" | "encomenda"
 
   useEffect(() => {
     fetch(GAS_URL)
       .then((res) => res.json())
       .then((raw) => {
         const rawProducts = Array.isArray(raw.products) ? raw.products : [];
+        const rawEncomendas = Array.isArray(raw.encomendas) ? raw.encomendas : [];
         setProducts(rawProducts.map(sheetToProduct));
+        setEncomendas(rawEncomendas.map(sheetToEncomenda));
       })
       .catch(() => setErro(true))
       .finally(() => setLoaded(true));
   }, []);
 
-  const disponiveis = useMemo(
-    () => products.filter((p) => Number(p.estoque) > 0 || p.sobEncomenda),
+  const produtosDisponiveis = useMemo(
+    () => products.filter((p) => Number(p.estoque) > 0).map((p) => ({ ...p, sobEncomenda: false })),
     [products]
   );
+  const itensSobEncomenda = useMemo(
+    () => encomendas.map((e) => ({ ...e, sobEncomenda: true, estoque: 0, tamanho: "", categoria: "", campeonato: "", genero: "" })),
+    [encomendas]
+  );
+  const disponiveis = view === "encomenda" ? itensSobEncomenda : produtosDisponiveis;
 
   const filtrados = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -188,6 +205,9 @@ function CatalogoPublico() {
         .cat-empty { text-align: center; padding: 60px 20px; color: var(--ink-soft); }
         .cat-loading { display: flex; align-items: center; justify-content: center; height: 300px; color: var(--ink-soft); gap: 8px; }
         .cat-erro { text-align: center; padding: 40px 20px; color: var(--danger); }
+        .cat-toggle { display: flex; gap: 6px; background: var(--panel); padding: 4px; border-radius: 10px; border: 1px solid var(--line); margin-bottom: 16px; max-width: 360px; }
+        .cat-toggle button { flex: 1; padding: 9px 6px; border: none; background: transparent; border-radius: 7px; font-size: 13.5px; font-weight: 500; cursor: pointer; color: var(--ink-soft); font-family: inherit; }
+        .cat-toggle button.active { background: var(--sage-bg); color: var(--sage); }
       `}</style>
       <div className="cat-wrap">
         <div className="cat-header">
@@ -203,6 +223,10 @@ function CatalogoPublico() {
           <div className="cat-erro">Não consegui carregar o catálogo agora. Tente atualizar a página.</div>
         ) : (
           <>
+            <div className="cat-toggle">
+              <button type="button" className={view === "disponivel" ? "active" : ""} onClick={() => setView("disponivel")}>Disponível agora</button>
+              <button type="button" className={view === "encomenda" ? "active" : ""} onClick={() => setView("encomenda")}>Sob encomenda</button>
+            </div>
             <div className="cat-search">
               <Search size={16} />
               <input placeholder="Buscar por time, campeonato…" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -210,7 +234,7 @@ function CatalogoPublico() {
             {filtrados.length === 0 ? (
               <div className="cat-empty">
                 <ShoppingBag size={30} style={{ marginBottom: 10, opacity: 0.5 }} />
-                <div>{disponiveis.length === 0 ? "Nenhum produto disponível no momento." : "Nada encontrado para essa busca."}</div>
+                <div>{disponiveis.length === 0 ? (view === "encomenda" ? "Nenhum item sob encomenda no momento." : "Nenhum produto disponível no momento.") : "Nada encontrado para essa busca."}</div>
               </div>
             ) : (
               <div className="cat-grid">
