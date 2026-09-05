@@ -113,6 +113,11 @@ function pickByNorm(rawObj, patterns) {
 
 // Converte uma linha crua vinda da planilha (chaves = cabeçalhos exatos)
 // para o formato interno "limpo" que o app usa.
+function parseBool_(v) {
+  const s = String(v ?? "").trim().toLowerCase();
+  return s === "sim" || s === "true" || s === "verdadeiro" || s === "1";
+}
+
 function sheetToProduct(row) {
   return {
     id: pickByNorm(row, ["id"]) || uid(),
@@ -127,6 +132,11 @@ function sheetToProduct(row) {
     preco: Number(pickByNorm(row, ["preco de venda", "preco"])) || 0,
     estoque: Number(pickByNorm(row, ["estoque atual"])) || 0,
     estoqueMinimo: Number(pickByNorm(row, ["estoque minimo", "estoque min"])) || 0,
+    imagens: String(pickByNorm(row, ["imagem", "imagens", "foto", "fotos"]) || "")
+      .split(/\r?\n|,\s*(?=https?:\/\/)/)
+      .map((s) => s.trim())
+      .filter(Boolean),
+    sobEncomenda: parseBool_(pickByNorm(row, ["sob encomenda"])),
   };
 }
 
@@ -147,6 +157,7 @@ function sheetToMovement(row) {
 const FALLBACK_HEADERS = [
   "ID", "Nome do Produto", "Tamanho", "Categoria", "Versão", "Campeonato",
   "Genêro", "Temporada", "Custo (R$)", "Preço de Venda (R$)", "Estoque Atual", "Estoque Minímo",
+  "Imagem", "Sob Encomenda",
 ];
 
 // Converte o produto "limpo" de volta para o formato de linha da planilha,
@@ -167,6 +178,8 @@ function productToSheetRow(p, headers) {
     else if (n.startsWith("preco")) data[h] = p.preco;
     else if (n.startsWith("estoque min")) data[h] = p.estoqueMinimo;
     else if (n.startsWith("estoque")) data[h] = p.estoque;
+    else if (n.startsWith("imagem") || n.startsWith("foto")) data[h] = (p.imagens || []).join("\n");
+    else if (n.startsWith("sob encomenda")) data[h] = p.sobEncomenda ? "Sim" : "";
   });
   return data;
 }
@@ -198,6 +211,8 @@ const emptyProduct = {
   preco: "",
   estoque: "",
   estoqueMinimo: "",
+  imagens: [],
+  sobEncomenda: false,
 };
 
 function ControleEstoque() {
@@ -218,7 +233,9 @@ function ControleEstoque() {
   const [importPending, setImportPending] = useState(null);
 
   const importRef = useRef(null);
+  const fileRef = useRef(null);
   const headersRef = useRef(FALLBACK_HEADERS);
+  const [uploadingImg, setUploadingImg] = useState(false);
 
   async function carregarDados(showSpinner) {
     if (showSpinner) setSyncing(true);
@@ -288,12 +305,34 @@ function ControleEstoque() {
       nome: p.nome, tamanho: p.tamanho || "", categoria: p.categoria || "", versao: p.versao || "",
       campeonato: p.campeonato || "", genero: p.genero || "", temporada: p.temporada || "",
       custo: p.custo, preco: p.preco, estoque: p.estoque, estoqueMinimo: p.estoqueMinimo ?? "",
+      imagens: Array.isArray(p.imagens) ? p.imagens : [], sobEncomenda: !!p.sobEncomenda,
     });
     setModalProduct(p);
   }
   function closeModal() {
     setModalProduct(null);
     setForm(emptyProduct);
+  }
+
+  async function handleAddImage(file) {
+    if (!file) return;
+    setUploadingImg(true);
+    try {
+      const dataUrl = await resizeImage(file);
+      const res = await gasPost({ action: "uploadImage", base64: dataUrl, mimeType: "image/jpeg", filename: uid() + ".jpg" });
+      if (res && res.ok && res.url) {
+        setForm((f) => ({ ...f, imagens: [...(f.imagens || []), res.url] }));
+      } else {
+        showToast("Não consegui salvar a imagem no Drive", "erro");
+      }
+    } catch (e) {
+      showToast("Não foi possível enviar a imagem", "erro");
+    }
+    setUploadingImg(false);
+  }
+
+  function removeImageAt(index) {
+    setForm((f) => ({ ...f, imagens: (f.imagens || []).filter((_, i) => i !== index) }));
   }
 
   async function saveProduct(e) {
@@ -311,6 +350,8 @@ function ControleEstoque() {
       preco: Number(form.preco) || 0,
       estoque: Number(form.estoque) || 0,
       estoqueMinimo: Number(form.estoqueMinimo) || 0,
+      imagens: form.imagens || [],
+      sobEncomenda: !!form.sobEncomenda,
     };
     const id = modalProduct && modalProduct.id ? modalProduct.id : uid();
     setSyncing(true);
@@ -386,12 +427,13 @@ function ControleEstoque() {
     return [p.versao, p.campeonato, p.genero, p.temporada].filter(Boolean).join(" · ");
   }
 
-  const disponiveis = products.filter((p) => Number(p.estoque) > 0);
+  const disponiveis = products.filter((p) => Number(p.estoque) > 0 || p.sobEncomenda);
 
   function copiarCatalogo() {
     const linhas = disponiveis.map((p) => {
       const extra = metaLine(p);
-      return `• ${p.nome}${p.tamanho ? " (" + p.tamanho + ")" : ""}${p.categoria ? " — " + p.categoria : ""}${extra ? " — " + extra : ""} — ${BRL(p.preco)} — ${p.estoque} disponível(is)`;
+      const disponibilidade = p.sobEncomenda ? "Sob encomenda" : `${p.estoque} disponível(is)`;
+      return `• ${p.nome}${p.tamanho ? " (" + p.tamanho + ")" : ""}${p.categoria ? " — " + p.categoria : ""}${extra ? " — " + extra : ""} — ${BRL(p.preco)} — ${disponibilidade}`;
     });
     const texto = `Produtos disponíveis:\n\n${linhas.join("\n")}`;
     if (navigator.clipboard?.writeText) {
@@ -543,7 +585,8 @@ function ControleEstoque() {
         .est-btn-ghost:hover { background: var(--paper); }
         .est-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(200px,1fr)); gap: 14px; }
         .est-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
-        .est-card-img { aspect-ratio: 4/3; background: var(--paper); display: flex; align-items: center; justify-content: center; color: var(--ink-soft); overflow: hidden; }
+        .est-card-img { aspect-ratio: 4/3; background: var(--paper); display: flex; align-items: center; justify-content: center; color: var(--ink-soft); overflow: hidden; position: relative; }
+        .est-photo-count { position: absolute; bottom: 6px; right: 6px; background: rgba(14,12,9,0.75); color: var(--ink); font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 999px; font-family: 'IBM Plex Mono', monospace; }
         .est-card-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
         .est-card-body { padding: 12px 13px 13px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
         .est-card-name { font-weight: 600; font-size: 14.5px; line-height: 1.25; }
@@ -556,6 +599,7 @@ function ControleEstoque() {
         .est-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
         .est-badge-ok { background: var(--sage-bg); color: var(--sage); }
         .est-badge-low { background: var(--amber-bg); color: var(--amber); }
+        .est-badge-encomenda { background: rgba(217,169,59,0.15); color: var(--rust); }
         .est-card-actions { display: flex; gap: 6px; margin-top: 8px; }
         .est-icon-btn {
           display: flex; align-items: center; justify-content: center; width: 30px; height: 30px;
@@ -580,8 +624,17 @@ function ControleEstoque() {
           display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px dashed var(--line); border-radius: 9px; cursor: pointer; background: var(--paper);
         }
         .est-imgpicker img { width: 46px; height: 46px; object-fit: cover; border-radius: 6px; }
+        .est-gallery { display: flex; flex-wrap: wrap; gap: 8px; }
+        .est-gallery-thumb { position: relative; width: 60px; height: 60px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); }
+        .est-gallery-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .est-gallery-remove { position: absolute; top: 2px; right: 2px; width: 16px; height: 16px; border-radius: 50%; border: none; background: rgba(14,12,9,0.75); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+        .est-gallery-add { width: 60px; height: 60px; border-radius: 8px; border: 1px dashed var(--line); background: var(--paper); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; cursor: pointer; color: var(--ink-soft); }
+        .est-gallery-add span { font-size: 9.5px; text-align: center; line-height: 1.1; }
         .est-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
         .est-derived { font-size: 12.5px; color: var(--ink-soft); background: var(--paper); padding: 8px 10px; border-radius: 8px; margin-top: -2px; margin-bottom: 12px; }
+        .est-checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 500; color: var(--ink); cursor: pointer; }
+        .est-field label.est-checkbox-row { display: flex; color: var(--ink); font-size: 13.5px; margin-bottom: 0; }
+        .est-checkbox-row input { width: 16px; height: 16px; accent-color: var(--rust); }
         .est-mov-form { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: grid; grid-template-columns: 1.4fr 1fr 0.8fr 1.4fr auto; gap: 8px; align-items: end; margin-bottom: 18px; }
         .est-mov-form .est-field { margin-bottom: 0; }
         .est-toggle { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
@@ -684,7 +737,12 @@ function ControleEstoque() {
                 return (
                   <div className="est-card" key={p.id}>
                     <div className="est-card-img">
-                      <ImagePlus size={26} />
+                      {p.imagens && p.imagens[0] ? (
+                        <>
+                          <img src={p.imagens[0]} alt={p.nome} />
+                          {p.imagens.length > 1 && <span className="est-photo-count">+{p.imagens.length - 1}</span>}
+                        </>
+                      ) : <ImagePlus size={26} />}
                     </div>
                     <div className="est-card-body">
                       <div className="est-card-name">{p.nome}{p.tamanho && <span className="est-size-tag">{p.tamanho}</span>}</div>
@@ -695,9 +753,13 @@ function ControleEstoque() {
                         <span className="est-margin">{margem.toFixed(0)}% margem</span>
                       </div>
                       <div className="est-card-row">
-                        <span className={`est-badge ${baixo ? "est-badge-low" : "est-badge-ok"}`}>
-                          {p.estoque} em estoque
-                        </span>
+                        {p.sobEncomenda ? (
+                          <span className="est-badge est-badge-encomenda">Sob encomenda</span>
+                        ) : (
+                          <span className={`est-badge ${baixo ? "est-badge-low" : "est-badge-ok"}`}>
+                            {p.estoque} em estoque
+                          </span>
+                        )}
                         <div className="est-stepper">
                           <button className="est-icon-btn" onClick={() => quickAdjust(p, -1)} title="Registrar saída"><ArrowDownCircle size={15} /></button>
                           <button className="est-icon-btn" onClick={() => quickAdjust(p, 1)} title="Registrar entrada"><ArrowUpCircle size={15} /></button>
@@ -775,13 +837,24 @@ function ControleEstoque() {
             <div className="est-grid">
               {disponiveis.map((p) => (
                 <div className="est-card est-catalog-card" key={p.id}>
-                  <div className="est-card-img"><ImagePlus size={26} /></div>
+                  <div className="est-card-img">
+                    {p.imagens && p.imagens[0] ? (
+                      <>
+                        <img src={p.imagens[0]} alt={p.nome} />
+                        {p.imagens.length > 1 && <span className="est-photo-count">+{p.imagens.length - 1}</span>}
+                      </>
+                    ) : <ImagePlus size={26} />}
+                  </div>
                   <div className="est-card-body">
                     <div className="est-card-name">{p.nome}{p.tamanho && <span className="est-size-tag">{p.tamanho}</span>}</div>
                     {p.categoria && <div className="est-card-cat">{p.categoria}</div>}
                     {metaLine(p) && <div className="est-card-meta">{metaLine(p)}</div>}
                     <span className="est-price">{BRL(p.preco)}</span>
-                    <span className="est-badge est-badge-ok">{p.estoque} disponível(is)</span>
+                    {p.sobEncomenda ? (
+                      <span className="est-badge est-badge-encomenda">Sob encomenda</span>
+                    ) : (
+                      <span className="est-badge est-badge-ok">{p.estoque} disponível(is)</span>
+                    )}
                   </div>
                 </div>
               ))}
@@ -795,6 +868,32 @@ function ControleEstoque() {
           <div className="est-modal" onClick={(e) => e.stopPropagation()}>
             <h3>{modalProduct.id ? "Editar produto" : "Novo produto"}</h3>
             <form onSubmit={saveProduct}>
+              <div className="est-field">
+                <label>Fotos do produto</label>
+                <div className="est-gallery">
+                  {(form.imagens || []).map((url, i) => (
+                    <div className="est-gallery-thumb" key={i}>
+                      <img src={url} alt="" />
+                      <button type="button" className="est-gallery-remove" onClick={() => removeImageAt(i)}><X size={11} /></button>
+                    </div>
+                  ))}
+                  <div className="est-gallery-add" onClick={() => !uploadingImg && fileRef.current?.click()}>
+                    {uploadingImg ? <Loader2 className="spin" size={18} /> : <ImagePlus size={18} />}
+                    <span>{uploadingImg ? "Enviando…" : "Adicionar"}</span>
+                  </div>
+                </div>
+                <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => { handleAddImage(e.target.files?.[0]); e.target.value = ""; }} />
+              </div>
+              <div className="est-field">
+                <label className="est-checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={!!form.sobEncomenda}
+                    onChange={(e) => setForm((f) => ({ ...f, sobEncomenda: e.target.checked }))}
+                  />
+                  Sob encomenda (sem controle de estoque — só a foto e o preço)
+                </label>
+              </div>
               <div className="est-field">
                 <label>Nome do produto</label>
                 <input value={form.nome} onChange={(e) => setForm((f) => ({ ...f, nome: e.target.value }))} placeholder="Ex: S C Corinthians" required />
@@ -851,16 +950,18 @@ function ControleEstoque() {
                   {"  ·  "}Margem: <strong>{(((Number(form.preco) - Number(form.custo || 0)) / Number(form.preco)) * 100).toFixed(1)}%</strong>
                 </div>
               )}
-              <div className="est-row2">
-                <div className="est-field">
-                  <label>Estoque atual</label>
-                  <input type="number" min="0" value={form.estoque} onChange={(e) => setForm((f) => ({ ...f, estoque: e.target.value }))} />
+              {!form.sobEncomenda && (
+                <div className="est-row2">
+                  <div className="est-field">
+                    <label>Estoque atual</label>
+                    <input type="number" min="0" value={form.estoque} onChange={(e) => setForm((f) => ({ ...f, estoque: e.target.value }))} />
+                  </div>
+                  <div className="est-field">
+                    <label>Estoque mínimo</label>
+                    <input type="number" min="0" value={form.estoqueMinimo} onChange={(e) => setForm((f) => ({ ...f, estoqueMinimo: e.target.value }))} placeholder="Alerta" />
+                  </div>
                 </div>
-                <div className="est-field">
-                  <label>Estoque mínimo</label>
-                  <input type="number" min="0" value={form.estoqueMinimo} onChange={(e) => setForm((f) => ({ ...f, estoqueMinimo: e.target.value }))} placeholder="Alerta" />
-                </div>
-              </div>
+              )}
               <div className="est-modal-actions">
                 <button type="button" className="est-btn est-btn-ghost" onClick={closeModal}>Cancelar</button>
                 <button type="submit" className="est-btn est-btn-primary" disabled={syncing}><Check size={15} /> Salvar</button>
