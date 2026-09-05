@@ -944,6 +944,9 @@ function ControleEstoque() {
       )}
 
       <div className="est-backup-bar">
+        <a className="est-btn est-btn-ghost" href="/cadastro.html" style={{ textDecoration: "none" }}>
+          <Plus size={13} /> Cadastro rápido
+        </a>
         <button className="est-btn est-btn-ghost" onClick={() => carregarDados(true)}>
           <RefreshCw size={13} className={syncing ? "spin" : ""} /> Atualizar da planilha
         </button>

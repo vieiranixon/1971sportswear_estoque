@@ -10,10 +10,12 @@ const CACHE_NAME = "estoque1971-v1";
 const ASSETS = [
   "/index.html",
   "/catalogo.html",
+  "/cadastro.html",
   "/icon-192.png",
   "/icon-512.png",
   "/manifest.json",
   "/manifest-catalogo.json",
+  "/manifest-cadastro.json",
 ];
 
 self.addEventListener("install", (event) => {
