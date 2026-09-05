@@ -61,6 +61,38 @@ function normKey(s) {
     .trim();
 }
 
+function pickByNorm(rawObj, patterns) {
+  const norm = {};
+  Object.keys(rawObj).forEach((k) => { norm[normKey(k)] = rawObj[k]; });
+  for (const p of patterns) {
+    if (norm[p] !== undefined) return norm[p];
+  }
+  const keys = Object.keys(norm);
+  for (const p of patterns) {
+    const found = keys.find((k) => k.startsWith(p));
+    if (found !== undefined) return norm[found];
+  }
+  return "";
+}
+
+// Descobre qual é a coluna de imagem na linha crua (o nome exato do
+// cabeçalho pode variar: "Imagem", "Fotos", com espaço extra, etc.)
+function acharColunaImagem(rawRow) {
+  return Object.keys(rawRow).find((k) => {
+    const n = normKey(k);
+    return n.startsWith("imagem") || n.startsWith("foto");
+  });
+}
+
+function imagensDaLinha(rawRow) {
+  const col = acharColunaImagem(rawRow);
+  if (!col) return [];
+  return String(rawRow[col] || "")
+    .split(/\r?\n|,\s*(?=https?:\/\/)/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 const FALLBACK_HEADERS = [
   "ID", "Nome do Produto", "Tamanho", "Categoria", "Versão", "Campeonato",
   "Genêro", "Temporada", "Custo (R$)", "Preço de Venda (R$)", "Estoque Atual", "Estoque Minímo",
@@ -151,26 +183,41 @@ function CadastroProduto() {
   const [ultimoSalvo, setUltimoSalvo] = useState(null);
   const [manterDados, setManterDados] = useState(true);
 
+  const [modo, setModo] = useState("novo"); // "novo" | "fotos"
+  const [rawProducts, setRawProducts] = useState([]);
+  const [rawEncomendas, setRawEncomendas] = useState([]);
+  const [carregandoLista, setCarregandoLista] = useState(false);
+  const [buscaFotos, setBuscaFotos] = useState("");
+  const [soSemFoto, setSoSemFoto] = useState(true);
+  const [selecionado, setSelecionado] = useState(null); // { raw, origem }
+  const [fotosSelecionado, setFotosSelecionado] = useState([]);
+
   const fileRef = useRef(null);
+  const fotoExistenteRef = useRef(null);
   // Cabeçalhos reais da planilha. Começamos com os padrões e, assim que a
   // planilha responde, trocamos pelos nomes exatos das colunas dela — assim
   // uma diferença de acento/espaço no cabeçalho não faz o dado chegar vazio.
   const headersRef = useRef(FALLBACK_HEADERS);
   const encHeadersRef = useRef(ENCOMENDA_FALLBACK_HEADERS);
 
+  async function carregarLista() {
+    setCarregandoLista(true);
+    try {
+      const raw = await gasGet();
+      const prods = Array.isArray(raw.products) ? raw.products : [];
+      const encs = Array.isArray(raw.encomendas) ? raw.encomendas : [];
+      if (prods[0]) headersRef.current = Object.keys(prods[0]);
+      if (encs[0]) encHeadersRef.current = Object.keys(encs[0]);
+      setRawProducts(prods);
+      setRawEncomendas(encs);
+    } catch (e) {
+      // sem conexão agora: seguimos com os cabeçalhos padrão
+    }
+    setCarregandoLista(false);
+  }
+
   useEffect(() => {
-    gasGet()
-      .then((raw) => {
-        if (Array.isArray(raw.products) && raw.products[0]) {
-          headersRef.current = Object.keys(raw.products[0]);
-        }
-        if (Array.isArray(raw.encomendas) && raw.encomendas[0]) {
-          encHeadersRef.current = Object.keys(raw.encomendas[0]);
-        }
-      })
-      .catch(() => {
-        // sem conexão agora: seguimos com os cabeçalhos padrão
-      });
+    carregarLista();
   }, []);
 
   function showToast(msg, kind = "ok") {
@@ -197,6 +244,95 @@ function CadastroProduto() {
 
   function removeImageAt(i) {
     setForm((f) => ({ ...f, imagens: (f.imagens || []).filter((_, idx) => idx !== i) }));
+  }
+
+  // ---------- Modo "Adicionar fotos" em produto já cadastrado ----------
+
+  const listaExistentes = (() => {
+    const itens = [
+      ...rawProducts.map((raw) => ({ raw, origem: "estoque" })),
+      ...rawEncomendas.map((raw) => ({ raw, origem: "encomenda" })),
+    ].map((item) => ({
+      ...item,
+      id: String(pickByNorm(item.raw, ["id"]) || ""),
+      nome: String(pickByNorm(item.raw, ["nome do produto", "nome"]) || ""),
+      tamanho: String(pickByNorm(item.raw, ["tamanho"]) || ""),
+      versao: String(pickByNorm(item.raw, ["versao"]) || ""),
+      temporada: String(pickByNorm(item.raw, ["temporada"]) || ""),
+      fotos: imagensDaLinha(item.raw),
+    }));
+
+    const q = buscaFotos.trim().toLowerCase();
+    return itens.filter((it) => {
+      if (soSemFoto && it.fotos.length > 0) return false;
+      if (!q) return true;
+      return (
+        it.nome.toLowerCase().includes(q) ||
+        it.tamanho.toLowerCase().includes(q) ||
+        it.versao.toLowerCase().includes(q) ||
+        it.temporada.toLowerCase().includes(q)
+      );
+    });
+  })();
+
+  const totalSemFoto = [
+    ...rawProducts.map((raw) => imagensDaLinha(raw)),
+    ...rawEncomendas.map((raw) => imagensDaLinha(raw)),
+  ].filter((f) => f.length === 0).length;
+
+  function abrirItem(item) {
+    setSelecionado(item);
+    setFotosSelecionado(item.fotos);
+  }
+
+  function fecharItem() {
+    setSelecionado(null);
+    setFotosSelecionado([]);
+  }
+
+  async function handleAddImageExistente(file) {
+    if (!file) return;
+    setUploadingImg(true);
+    try {
+      const dataUrl = await resizeImage(file);
+      const res = await gasPost({ action: "uploadImage", base64: dataUrl, mimeType: "image/jpeg", filename: uid() + ".jpg" });
+      if (res && res.ok && res.url) {
+        setFotosSelecionado((prev) => [...prev, res.url]);
+      } else {
+        showToast("Não consegui salvar a foto no Drive", "erro");
+      }
+    } catch (e) {
+      showToast("Não foi possível enviar a foto", "erro");
+    }
+    setUploadingImg(false);
+  }
+
+  async function salvarFotos() {
+    if (!selecionado) return;
+    setSalvando(true);
+    try {
+      // Copiamos a linha exatamente como está na planilha e trocamos só a
+      // coluna de imagem — assim nenhum outro campo é alterado por engano.
+      const data = { ...selecionado.raw };
+      const idKey = Object.keys(data).find((k) => normKey(k) === "id");
+      if (idKey) delete data[idKey];
+
+      let colImagem = acharColunaImagem(selecionado.raw);
+      if (!colImagem) colImagem = "Imagem";
+      data[colImagem] = fotosSelecionado.join("\n");
+
+      const payload = selecionado.origem === "encomenda"
+        ? { action: "upsertEncomenda", id: selecionado.id, data }
+        : { id: selecionado.id, data };
+
+      await gasPost(payload);
+      showToast(`Fotos salvas em "${selecionado.nome}"`);
+      fecharItem();
+      await carregarLista();
+    } catch (err) {
+      showToast("Não consegui salvar as fotos. Tente de novo.", "erro");
+    }
+    setSalvando(false);
   }
 
   const margem = Number(form.preco) > 0
@@ -307,10 +443,18 @@ function CadastroProduto() {
         .cad-links a { flex: 1; text-align: center; padding: 11px; border-radius: 9px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); text-decoration: none; font-size: 13.5px; font-weight: 500; }
         .cad-toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: #100D08; border: 1px solid var(--line); color: var(--ink); padding: 12px 20px; border-radius: 9px; font-size: 14px; z-index: 60; max-width: 90%; text-align: center; }
         .cad-toast.erro { background: #7A241A; border-color: var(--danger); }
+        .cad-lista { display: flex; flex-direction: column; gap: 8px; }
+        .cad-item { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; cursor: pointer; font-family: inherit; color: var(--ink); }
+        .cad-item:active { background: var(--panel2); }
+        .cad-item-thumb { width: 52px; height: 52px; border-radius: 8px; background: var(--panel2); display: flex; align-items: center; justify-content: center; overflow: hidden; flex-shrink: 0; color: var(--ink-soft); }
+        .cad-item-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .cad-item-info { flex: 1; min-width: 0; }
+        .cad-item-nome { font-weight: 600; font-size: 14.5px; line-height: 1.25; }
+        .cad-item-meta { font-size: 11.5px; color: var(--ink-soft); margin-top: 2px; }
+        .cad-item-tag { font-size: 10.5px; font-weight: 600; color: var(--rust); border: 1px solid var(--rust); border-radius: 999px; padding: 2px 8px; white-space: nowrap; flex-shrink: 0; }
+        .cad-vazio { text-align: center; padding: 40px 20px; color: var(--ink-soft); font-size: 14px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+        .cad-voltar { width: 100%; margin-top: 10px; padding: 13px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font-size: 14px; font-family: inherit; cursor: pointer; }
 
-        /* Se a página for renderizada com viewport largo (ex.: Chrome com
-           "Site para computador" ligado no celular), tudo fica minúsculo.
-           Aqui aumentamos o conteúdo para continuar legível nesse caso. */
         @media (min-width: 700px) {
           .cad-wrap { max-width: 760px; }
           .cad-title { font-size: 30px; }
@@ -326,7 +470,14 @@ function CadastroProduto() {
           .cad-links a { font-size: 17px; padding: 15px; }
           .cad-thumb, .cad-add { width: 88px; height: 88px; }
           .cad-add span { font-size: 12px; }
+          .cad-item-nome { font-size: 18px; }
+          .cad-item-meta { font-size: 14px; }
+          .cad-item-tag { font-size: 13px; }
+          .cad-item-thumb { width: 66px; height: 66px; }
+          .cad-voltar { font-size: 17px; padding: 16px; }
+          .cad-vazio { font-size: 17px; }
         }
+
       `}</style>
 
       <div className="cad-wrap">
@@ -345,6 +496,93 @@ function CadastroProduto() {
           </div>
         )}
 
+        <div className="cad-destino" style={{ marginBottom: 14 }}>
+          <button type="button" className={modo === "novo" ? "active" : ""} onClick={() => { setModo("novo"); fecharItem(); }}>
+            Novo produto
+          </button>
+          <button type="button" className={modo === "fotos" ? "active" : ""} onClick={() => setModo("fotos")}>
+            Adicionar fotos
+          </button>
+        </div>
+
+        {modo === "fotos" ? (
+          <>
+            {selecionado ? (
+              <>
+                <div className="cad-card">
+                  <div style={{ fontWeight: 600, fontSize: 16, marginBottom: 2 }}>{selecionado.nome}</div>
+                  <div className="cad-sub" style={{ marginBottom: 14 }}>
+                    {[selecionado.tamanho, selecionado.versao, selecionado.temporada].filter(Boolean).join(" · ")}
+                    {selecionado.origem === "encomenda" ? " · Sob encomenda" : ""}
+                  </div>
+                  <div className="cad-field">
+                    <label>Fotos</label>
+                    <div className="cad-gallery">
+                      {fotosSelecionado.map((url, i) => (
+                        <div className="cad-thumb" key={i}>
+                          <img src={url} alt="" />
+                          <button type="button" onClick={() => setFotosSelecionado((p) => p.filter((_, idx) => idx !== i))}>×</button>
+                        </div>
+                      ))}
+                      <div className="cad-add" onClick={() => !uploadingImg && fotoExistenteRef.current?.click()}>
+                        {uploadingImg ? <Loader2 className="spin" size={18} /> : <ImagePlus size={18} />}
+                        <span>{uploadingImg ? "Enviando…" : "Foto"}</span>
+                      </div>
+                    </div>
+                    <input ref={fotoExistenteRef} type="file" accept="image/*" hidden
+                      onChange={(e) => { handleAddImageExistente(e.target.files?.[0]); e.target.value = ""; }} />
+                  </div>
+                </div>
+
+                <button type="button" className="cad-submit" onClick={salvarFotos} disabled={salvando || uploadingImg}>
+                  {salvando ? <Loader2 className="spin" size={18} /> : <Check size={18} />}
+                  {salvando ? "Salvando…" : "Salvar fotos"}
+                </button>
+                <button type="button" className="cad-voltar" onClick={fecharItem}>Voltar para a lista</button>
+              </>
+            ) : (
+              <>
+                <div className="cad-card">
+                  <div className="cad-field">
+                    <label>Buscar produto</label>
+                    <input value={buscaFotos} onChange={(e) => setBuscaFotos(e.target.value)} placeholder="Nome, tamanho, temporada…" />
+                  </div>
+                  <label className="cad-check" style={{ margin: 0 }}>
+                    <input type="checkbox" checked={soSemFoto} onChange={(e) => setSoSemFoto(e.target.checked)} />
+                    Mostrar só os que ainda não têm foto ({totalSemFoto})
+                  </label>
+                </div>
+
+                {carregandoLista ? (
+                  <div className="cad-vazio"><Loader2 className="spin" size={20} /> Carregando produtos…</div>
+                ) : listaExistentes.length === 0 ? (
+                  <div className="cad-vazio">
+                    {soSemFoto ? "Todos os produtos já têm foto! 🎉" : "Nenhum produto encontrado."}
+                  </div>
+                ) : (
+                  <div className="cad-lista">
+                    {listaExistentes.map((it) => (
+                      <button type="button" className="cad-item" key={it.id} onClick={() => abrirItem(it)}>
+                        <div className="cad-item-thumb">
+                          {it.fotos[0] ? <img src={it.fotos[0]} alt="" /> : <ImagePlus size={18} />}
+                        </div>
+                        <div className="cad-item-info">
+                          <div className="cad-item-nome">{it.nome || "(sem nome)"}</div>
+                          <div className="cad-item-meta">
+                            {[it.tamanho, it.versao, it.temporada].filter(Boolean).join(" · ")}
+                            {it.origem === "encomenda" ? " · Sob encomenda" : ""}
+                          </div>
+                        </div>
+                        <div className="cad-item-tag">{it.fotos.length > 0 ? `${it.fotos.length} foto(s)` : "sem foto"}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </>
+        ) : (
+        <>
         <div className="cad-destino">
           <button type="button" className={destino === "estoque" ? "active" : ""} onClick={() => setDestino("estoque")}>
             Disponível agora
@@ -475,6 +713,8 @@ function CadastroProduto() {
             {salvando ? "Salvando…" : "Cadastrar produto"}
           </button>
         </form>
+        </>
+        )}
 
         <div className="cad-links">
           <a href="/index.html">Painel de estoque</a>
