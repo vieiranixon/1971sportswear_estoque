@@ -236,6 +236,8 @@ function ControleEstoque() {
   const fileRef = useRef(null);
   const headersRef = useRef(FALLBACK_HEADERS);
   const [uploadingImg, setUploadingImg] = useState(false);
+  const [gerandoImagem, setGerandoImagem] = useState(false);
+  const catalogRef = useRef(null);
 
   async function carregarDados(showSpinner) {
     if (showSpinner) setSyncing(true);
@@ -427,13 +429,80 @@ function ControleEstoque() {
     return [p.versao, p.campeonato, p.genero, p.temporada].filter(Boolean).join(" · ");
   }
 
+  // No Catálogo (visão do cliente), produtos Sob Encomenda mostram só
+  // versão + temporada — o resto (tamanho, campeonato, gênero) não ajuda
+  // o cliente a identificar o produto nesse caso.
+  function metaLineCatalogo(p) {
+    if (p.sobEncomenda) return [p.versao, p.temporada].filter(Boolean).join(" · ");
+    return metaLine(p);
+  }
+
   const disponiveis = products.filter((p) => Number(p.estoque) > 0 || p.sobEncomenda);
+
+  function loadHtml2Canvas() {
+    if (window.html2canvas) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const existing = document.querySelector('script[data-html2canvas]');
+      if (existing) {
+        existing.addEventListener("load", resolve);
+        existing.addEventListener("error", reject);
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
+      script.setAttribute("data-html2canvas", "1");
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  }
+
+  async function compartilharCatalogoImagem() {
+    if (!catalogRef.current || disponiveis.length === 0) return;
+    setGerandoImagem(true);
+    try {
+      await loadHtml2Canvas();
+      const canvas = await window.html2canvas(catalogRef.current, {
+        backgroundColor: "#0E0C09",
+        scale: 2,
+        useCORS: true,
+      });
+      canvas.toBlob(async (blob) => {
+        if (!blob) { showToast("Não consegui gerar a imagem", "erro"); setGerandoImagem(false); return; }
+        const file = new File([blob], "catalogo-1971-sportswear.png", { type: "image/png" });
+        try {
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: "Catálogo 1971 Sportswear" });
+          } else {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "catalogo-1971-sportswear.png";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            showToast("Imagem baixada — já pode enviar pelo WhatsApp");
+          }
+        } catch (shareErr) {
+          // usuário cancelou o compartilhamento — não é erro
+        }
+        setGerandoImagem(false);
+      }, "image/png");
+    } catch (e) {
+      showToast("Não consegui gerar a imagem do catálogo", "erro");
+      setGerandoImagem(false);
+    }
+  }
 
   function copiarCatalogo() {
     const linhas = disponiveis.map((p) => {
-      const extra = metaLine(p);
+      const extra = metaLineCatalogo(p);
       const disponibilidade = p.sobEncomenda ? "Sob encomenda" : `${p.estoque} disponível(is)`;
-      return `• ${p.nome}${p.tamanho ? " (" + p.tamanho + ")" : ""}${p.categoria ? " — " + p.categoria : ""}${extra ? " — " + extra : ""} — ${BRL(p.preco)} — ${disponibilidade}`;
+      const tamanhoECategoria = p.sobEncomenda
+        ? ""
+        : `${p.tamanho ? " (" + p.tamanho + ")" : ""}${p.categoria ? " — " + p.categoria : ""}`;
+      return `• ${p.nome}${tamanhoECategoria}${extra ? " — " + extra : ""} — ${BRL(p.preco)} — ${disponibilidade}`;
     });
     const texto = `Produtos disponíveis:\n\n${linhas.join("\n")}`;
     if (navigator.clipboard?.writeText) {
@@ -829,12 +898,17 @@ function ControleEstoque() {
         <>
           <div className="est-catalog-head">
             <div className="est-sub" style={{ marginTop: 0 }}>{disponiveis.length} produto(s) disponível(is) para envio</div>
-            <button className="est-btn est-btn-ghost" onClick={copiarCatalogo}><Copy size={15} /> Copiar lista para o cliente</button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button className="est-btn est-btn-ghost" onClick={copiarCatalogo}><Copy size={15} /> Copiar lista (texto)</button>
+              <button className="est-btn est-btn-primary" onClick={compartilharCatalogoImagem} disabled={gerandoImagem || disponiveis.length === 0}>
+                {gerandoImagem ? <Loader2 className="spin" size={15} /> : <Send size={15} />} {gerandoImagem ? "Gerando…" : "Enviar como imagem"}
+              </button>
+            </div>
           </div>
           {disponiveis.length === 0 ? (
             <div className="est-empty"><ShoppingBag size={28} style={{ marginBottom: 8, opacity: 0.5 }} />Nenhum produto disponível no momento.</div>
           ) : (
-            <div className="est-grid">
+            <div className="est-grid" ref={catalogRef}>
               {disponiveis.map((p) => (
                 <div className="est-card est-catalog-card" key={p.id}>
                   <div className="est-card-img">
@@ -846,9 +920,11 @@ function ControleEstoque() {
                     ) : <ImagePlus size={26} />}
                   </div>
                   <div className="est-card-body">
-                    <div className="est-card-name">{p.nome}{p.tamanho && <span className="est-size-tag">{p.tamanho}</span>}</div>
-                    {p.categoria && <div className="est-card-cat">{p.categoria}</div>}
-                    {metaLine(p) && <div className="est-card-meta">{metaLine(p)}</div>}
+                    <div className="est-card-name">
+                      {p.nome}{!p.sobEncomenda && p.tamanho && <span className="est-size-tag">{p.tamanho}</span>}
+                    </div>
+                    {!p.sobEncomenda && p.categoria && <div className="est-card-cat">{p.categoria}</div>}
+                    {metaLineCatalogo(p) && <div className="est-card-meta">{metaLineCatalogo(p)}</div>}
                     <span className="est-price">{BRL(p.preco)}</span>
                     {p.sobEncomenda ? (
                       <span className="est-badge est-badge-encomenda">Sob encomenda</span>
