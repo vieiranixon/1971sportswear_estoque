@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Catálogo · 1971 Sportswear</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #0E0C09; }
+  .boot-error { color: #F5F0E1; font-family: sans-serif; padding: 24px; white-space: pre-wrap; }
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/plain" id="jsx-src">
+const { useState, useEffect, useMemo } = React;
+
+function Icon({ children, size = 16, color, style, className }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color || "currentColor"}
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={style} className={className}>
+      {children}
+    </svg>
+  );
+}
+const Search = (p) => <Icon {...p}><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></Icon>;
+const ImagePlus = (p) => <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></Icon>;
+const ShoppingBag = (p) => <Icon {...p}><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></Icon>;
+const Loader2 = (p) => <Icon {...p}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></Icon>;
+const MessageCircle = (p) => <Icon {...p}><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></Icon>;
+
+// URL do mesmo Google Apps Script do app de estoque — aqui só fazemos leitura (GET),
+// então essa página nunca altera nada na planilha.
+const GAS_URL =
+  "https://script.google.com/macros/s/AKfycbyLPXSzDa3IPzx4pxAVPMSjdTQiVcqQMGf2gZjAL7JiZVVCGQ2l0R_YR9Yvb2hFCmqV/exec";
+
+// Número de WhatsApp da loja para o botão "Pedir pelo WhatsApp" (formato internacional, só dígitos).
+// Deixe em branco ("") para esconder o botão.
+const WHATSAPP_NUMERO = "5511953694802";
+
+const BRL = (v) =>
+  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(
+    Number.isFinite(v) ? v : 0
+  );
+
+function normKey(s) {
+  return String(s ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function pickByNorm(rawObj, patterns) {
+  const norm = {};
+  Object.keys(rawObj).forEach((k) => { norm[normKey(k)] = rawObj[k]; });
+  for (const p of patterns) {
+    if (norm[p] !== undefined) return norm[p];
+  }
+  const keys = Object.keys(norm);
+  for (const p of patterns) {
+    const found = keys.find((k) => k.startsWith(p));
+    if (found !== undefined) return norm[found];
+  }
+  return "";
+}
+
+function parseBool_(v) {
+  const s = String(v ?? "").trim().toLowerCase();
+  return s === "sim" || s === "true" || s === "verdadeiro" || s === "1";
+}
+
+function sheetToProduct(row) {
+  return {
+    id: pickByNorm(row, ["id"]) || Math.random().toString(36),
+    nome: String(pickByNorm(row, ["nome do produto", "nome"]) || ""),
+    tamanho: String(pickByNorm(row, ["tamanho"]) || ""),
+    categoria: String(pickByNorm(row, ["categoria"]) || ""),
+    versao: String(pickByNorm(row, ["versao"]) || ""),
+    campeonato: String(pickByNorm(row, ["campeonato", "liga"]) || ""),
+    genero: String(pickByNorm(row, ["genero"]) || ""),
+    temporada: String(pickByNorm(row, ["temporada"]) || ""),
+    preco: Number(pickByNorm(row, ["preco de venda", "preco"])) || 0,
+    estoque: Number(pickByNorm(row, ["estoque atual"])) || 0,
+    imagens: String(pickByNorm(row, ["imagem", "imagens", "foto", "fotos"]) || "")
+      .split(/\r?\n|,\s*(?=https?:\/\/)/)
+      .map((s) => s.trim())
+      .filter(Boolean),
+    sobEncomenda: parseBool_(pickByNorm(row, ["sob encomenda"])),
+  };
+}
+
+function CatalogoPublico() {
+  const [products, setProducts] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [erro, setErro] = useState(false);
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    fetch(GAS_URL)
+      .then((res) => res.json())
+      .then((raw) => {
+        const rawProducts = Array.isArray(raw.products) ? raw.products : [];
+        setProducts(rawProducts.map(sheetToProduct));
+      })
+      .catch(() => setErro(true))
+      .finally(() => setLoaded(true));
+  }, []);
+
+  const disponiveis = useMemo(
+    () => products.filter((p) => Number(p.estoque) > 0 || p.sobEncomenda),
+    [products]
+  );
+
+  const filtrados = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return disponiveis;
+    return disponiveis.filter(
+      (p) =>
+        p.nome.toLowerCase().includes(q) ||
+        (p.categoria || "").toLowerCase().includes(q) ||
+        (p.campeonato || "").toLowerCase().includes(q) ||
+        (p.temporada || "").toLowerCase().includes(q)
+    );
+  }, [disponiveis, search]);
+
+  function metaLineCatalogo(p) {
+    if (p.sobEncomenda) return [p.versao, p.temporada].filter(Boolean).join(" · ");
+    return [p.versao, p.campeonato, p.genero, p.temporada].filter(Boolean).join(" · ");
+  }
+
+  function pedirNoWhatsapp(p) {
+    if (!WHATSAPP_NUMERO) return;
+    const texto = `Olá! Tenho interesse em: ${p.nome}${p.tamanho ? " (" + p.tamanho + ")" : ""} — ${BRL(p.preco)}`;
+    window.open(`https://wa.me/${WHATSAPP_NUMERO}?text=${encodeURIComponent(texto)}`, "_blank");
+  }
+
+  return (
+    <div className="cat-root">
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap');
+        .cat-root {
+          --paper: #0E0C09; --panel: #18150F; --panel2: #211C13;
+          --ink: #F5F0E1; --ink-soft: #A99C7C; --line: #3A311E;
+          --rust: #D9A93B; --rust-dark: #B8862A;
+          --sage: #6FBE8C; --sage-bg: #16281F;
+          --danger: #C0392B;
+          font-family: 'IBM Plex Sans', sans-serif;
+          background: var(--paper); color: var(--ink);
+          min-height: 100vh; padding: 24px 16px 60px;
+        }
+        .cat-root * { box-sizing: border-box; }
+        .spin { animation: cat-spin 0.9s linear infinite; }
+        @keyframes cat-spin { to { transform: rotate(360deg); } }
+        .cat-wrap { max-width: 1100px; margin: 0 auto; }
+        .cat-header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+        .cat-title { font-family: 'Oswald', sans-serif; font-weight: 600; font-size: 24px; text-transform: uppercase; letter-spacing: 0.03em; margin: 0; }
+        .cat-sub { color: var(--ink-soft); font-size: 13px; margin-top: 2px; }
+        .cat-search { position: relative; margin-bottom: 20px; }
+        .cat-search input {
+          width: 100%; padding: 11px 14px 11px 38px; border-radius: 10px; border: 1px solid var(--line);
+          background: var(--panel); color: var(--ink); font-size: 15px; font-family: inherit;
+        }
+        .cat-search svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--ink-soft); }
+        .cat-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(200px,1fr)); gap: 14px; }
+        .cat-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+        .cat-card-img { aspect-ratio: 4/3; background: var(--paper); display: flex; align-items: center; justify-content: center; color: var(--ink-soft); overflow: hidden; position: relative; }
+        .cat-card-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .cat-photo-count { position: absolute; bottom: 6px; right: 6px; background: rgba(14,12,9,0.75); color: var(--ink); font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 999px; font-family: 'IBM Plex Mono', monospace; }
+        .cat-card-body { padding: 12px 13px 13px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+        .cat-card-name { font-weight: 600; font-size: 14.5px; line-height: 1.25; }
+        .cat-size-tag { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; padding: 1px 7px; border: 1px solid var(--rust); color: var(--rust); border-radius: 6px; font-size: 11px; font-weight: 700; font-family: 'IBM Plex Mono', monospace; margin-left: 6px; }
+        .cat-card-cat { font-size: 12px; color: var(--ink-soft); }
+        .cat-card-meta { font-size: 11px; color: var(--ink-soft); opacity: 0.85; }
+        .cat-price { font-family: 'IBM Plex Mono', monospace; font-weight: 500; font-size: 15.5px; margin-top: 2px; }
+        .cat-badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; display: inline-block; width: fit-content; }
+        .cat-badge-ok { background: var(--sage-bg); color: var(--sage); }
+        .cat-badge-encomenda { background: rgba(217,169,59,0.15); color: var(--rust); }
+        .cat-wa-btn {
+          margin-top: 6px; display: flex; align-items: center; justify-content: center; gap: 6px;
+          background: var(--rust); color: #17130B; border: none; border-radius: 8px; padding: 8px; font-weight: 600; font-size: 13px; cursor: pointer;
+        }
+        .cat-wa-btn:hover { background: var(--rust-dark); }
+        .cat-empty { text-align: center; padding: 60px 20px; color: var(--ink-soft); }
+        .cat-loading { display: flex; align-items: center; justify-content: center; height: 300px; color: var(--ink-soft); gap: 8px; }
+        .cat-erro { text-align: center; padding: 40px 20px; color: var(--danger); }
+      `}</style>
+      <div className="cat-wrap">
+        <div className="cat-header">
+          <div>
+            <h1 className="cat-title">1971 Sportswear</h1>
+            <div className="cat-sub">Catálogo disponível agora</div>
+          </div>
+        </div>
+
+        {!loaded ? (
+          <div className="cat-loading"><Loader2 className="spin" size={20} /> Carregando produtos…</div>
+        ) : erro ? (
+          <div className="cat-erro">Não consegui carregar o catálogo agora. Tente atualizar a página.</div>
+        ) : (
+          <>
+            <div className="cat-search">
+              <Search size={16} />
+              <input placeholder="Buscar por time, campeonato…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            </div>
+            {filtrados.length === 0 ? (
+              <div className="cat-empty">
+                <ShoppingBag size={30} style={{ marginBottom: 10, opacity: 0.5 }} />
+                <div>{disponiveis.length === 0 ? "Nenhum produto disponível no momento." : "Nada encontrado para essa busca."}</div>
+              </div>
+            ) : (
+              <div className="cat-grid">
+                {filtrados.map((p) => (
+                  <div className="cat-card" key={p.id}>
+                    <div className="cat-card-img">
+                      {p.imagens && p.imagens[0] ? (
+                        <>
+                          <img src={p.imagens[0]} alt={p.nome} />
+                          {p.imagens.length > 1 && <span className="cat-photo-count">+{p.imagens.length - 1}</span>}
+                        </>
+                      ) : <ImagePlus size={26} />}
+                    </div>
+                    <div className="cat-card-body">
+                      <div className="cat-card-name">
+                        {p.nome}{!p.sobEncomenda && p.tamanho && <span className="cat-size-tag">{p.tamanho}</span>}
+                      </div>
+                      {!p.sobEncomenda && p.categoria && <div className="cat-card-cat">{p.categoria}</div>}
+                      {metaLineCatalogo(p) && <div className="cat-card-meta">{metaLineCatalogo(p)}</div>}
+                      <div className="cat-price">{BRL(p.preco)}</div>
+                      {p.sobEncomenda ? (
+                        <span className="cat-badge cat-badge-encomenda">Sob encomenda</span>
+                      ) : (
+                        <span className="cat-badge cat-badge-ok">{p.estoque} disponível(is)</span>
+                      )}
+                      {WHATSAPP_NUMERO && (
+                        <button className="cat-wa-btn" onClick={() => pedirNoWhatsapp(p)}>
+                          <MessageCircle size={14} /> Pedir pelo WhatsApp
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<CatalogoPublico />);
+</script>
+
+<script>
+  (function () {
+    var source = document.getElementById("jsx-src").textContent;
+    try {
+      var compiled = Babel.transform(source, {
+        presets: [["react", { runtime: "classic" }]]
+      }).code;
+      (0, eval)(compiled);
+    } catch (err) {
+      document.getElementById("root").innerHTML =
+        '<div class="boot-error">Erro ao carregar o catálogo:\n' + (err && err.message ? err.message : err) + '</div>';
+      console.error(err);
+    }
+  })();
+</script>
+</body>
+</html>
