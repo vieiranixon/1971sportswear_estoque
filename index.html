@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Estoque · 1971 Sportswear</title>
+<link rel="manifest" href="/manifest.json" />
 <meta name="theme-color" content="#0E0C09" />
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -1398,6 +1399,15 @@ ReactDOM.createRoot(document.getElementById("root")).render(<ControleEstoque />)
       console.error(err);
     }
   })();
+</script>
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", function () {
+      navigator.serviceWorker.register("/sw.js").catch(function (e) {
+        console.log("SW não registrado:", e);
+      });
+    });
+  }
 </script>
 </body>
 </html>
