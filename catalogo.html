@@ -114,6 +114,36 @@ function sheetToEncomenda(row) {
   };
 }
 
+// Ordem em que os tamanhos aparecem no card. Qualquer tamanho fora desta
+// lista vai para o fim, na ordem em que foi cadastrado.
+const ORDEM_TAMANHOS = ["PP", "P", "M", "G", "GG", "3G", "XGG", "XXG", "4G", "XXXG"];
+
+function posicaoTamanho(t) {
+  const i = ORDEM_TAMANHOS.indexOf(String(t || "").trim().toUpperCase());
+  return i === -1 ? 999 : i;
+}
+
+// Produtos que só diferem pelo tamanho viram um card só. A chave ignora o
+// tamanho justamente para juntá-los.
+function chaveGrupo(p) {
+  return normKey(
+    [p.nome, p.versao, p.campeonato, p.genero, p.temporada, p.categoria, p.sobEncomenda ? "enc" : "est"].join("|")
+  );
+}
+
+function agruparPorTamanho(lista) {
+  const mapa = new Map();
+  lista.forEach((p) => {
+    const k = chaveGrupo(p);
+    if (!mapa.has(k)) mapa.set(k, { id: k, base: p, variantes: [] });
+    mapa.get(k).variantes.push(p);
+  });
+  return Array.from(mapa.values()).map((g) => ({
+    ...g,
+    variantes: g.variantes.slice().sort((a, b) => posicaoTamanho(a.tamanho) - posicaoTamanho(b.tamanho)),
+  }));
+}
+
 // Abas de categoria. Cada uma casa com o conteúdo da coluna "Categoria"
 // do produto, ignorando acentos e maiúsculas — assim "Bone", "boné" e
 // "Bonés" caem todos na mesma aba.
@@ -182,6 +212,15 @@ function CatalogoPublico() {
       );
     });
   }, [disponiveis, search, categoria]);
+
+  const grupos = useMemo(() => agruparPorTamanho(filtrados), [filtrados]);
+
+  // Tamanho escolhido em cada card (por id de grupo)
+  const [escolhas, setEscolhas] = useState({});
+  function varianteDe(grupo) {
+    const escolhido = escolhas[grupo.id];
+    return grupo.variantes.find((v) => v.id === escolhido) || grupo.variantes[0];
+  }
 
   function metaLineCatalogo(p) {
     if (p.sobEncomenda) return [p.versao, p.temporada].filter(Boolean).join(" · ");
@@ -275,6 +314,13 @@ function CatalogoPublico() {
         }
         .cat-cats button.on { background: var(--rust); border-color: var(--rust); color: #17130B; font-weight: 600; }
         .cat-cats-qtd { font-size: 11px; opacity: 0.7; font-family: 'IBM Plex Mono', monospace; }
+        .cat-tamanhos { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 2px; }
+        .cat-tamanhos button {
+          min-width: 36px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line);
+          background: var(--panel2); color: var(--ink-soft); font-size: 13px; font-weight: 600;
+          font-family: 'IBM Plex Mono', monospace; cursor: pointer;
+        }
+        .cat-tamanhos button.on { background: var(--rust); border-color: var(--rust); color: #17130B; }
         .cat-card-img.clicavel { cursor: pointer; }
         .cat-photo-count { display: flex; align-items: center; gap: 3px; }
         .cat-lb {
@@ -310,6 +356,7 @@ function CatalogoPublico() {
           .cat-lb-pontos span { width: 2.2vw; height: 2.2vw; }
           .cat-cats button { font-size: 3.4vw; padding: 2.2vw 3.8vw; }
           .cat-cats-qtd { font-size: 2.8vw; }
+          .cat-tamanhos button { font-size: 3.4vw; padding: 1.8vw 3vw; min-width: 9vw; }
         }
       `}</style>
       <div className="cat-wrap">
@@ -359,43 +406,70 @@ function CatalogoPublico() {
               </div>
             ) : (
               <div className="cat-grid">
-                {filtrados.map((p) => (
-                  <div className="cat-card" key={p.id}>
-                    <div
-                      className={`cat-card-img ${p.imagens && p.imagens.length ? "clicavel" : ""}`}
-                      onClick={() => p.imagens && p.imagens.length && setLightbox({ produto: p, indice: 0 })}
-                    >
-                      {p.imagens && p.imagens[0] ? (
-                        <>
-                          <img src={p.imagens[0]} alt={p.nome} />
-                          {p.imagens.length > 1 && (
-                            <span className="cat-photo-count">
-                              <Images size={11} /> {p.imagens.length}
-                            </span>
-                          )}
-                        </>
-                      ) : <ImagePlus size={26} />}
-                    </div>
-                    <div className="cat-card-body">
-                      <div className="cat-card-name">
-                        {p.nome}{!p.sobEncomenda && p.tamanho && <span className="cat-size-tag">{p.tamanho}</span>}
+                {grupos.map((g) => {
+                  // A variante escolhida define foto, preço e estoque exibidos.
+                  const p = varianteDe(g);
+                  // Fotos: usa as do tamanho escolhido; se ele não tiver foto,
+                  // aproveita as de outro tamanho do mesmo modelo.
+                  const fotos = (p.imagens && p.imagens.length)
+                    ? p.imagens
+                    : (g.variantes.find((v) => v.imagens && v.imagens.length)?.imagens || []);
+                  const temVariosTamanhos = g.variantes.length > 1 || (g.variantes[0] && g.variantes[0].tamanho);
+
+                  return (
+                    <div className="cat-card" key={g.id}>
+                      <div
+                        className={`cat-card-img ${fotos.length ? "clicavel" : ""}`}
+                        onClick={() => fotos.length && setLightbox({ produto: { ...p, imagens: fotos }, indice: 0 })}
+                      >
+                        {fotos[0] ? (
+                          <>
+                            <img src={fotos[0]} alt={p.nome} />
+                            {fotos.length > 1 && (
+                              <span className="cat-photo-count">
+                                <Images size={11} /> {fotos.length}
+                              </span>
+                            )}
+                          </>
+                        ) : <ImagePlus size={26} />}
                       </div>
-                      {!p.sobEncomenda && p.categoria && <div className="cat-card-cat">{p.categoria}</div>}
-                      {metaLineCatalogo(p) && <div className="cat-card-meta">{metaLineCatalogo(p)}</div>}
-                      <div className="cat-price">{BRL(p.preco)}</div>
-                      {p.sobEncomenda ? (
-                        <span className="cat-badge cat-badge-encomenda">Sob encomenda</span>
-                      ) : (
-                        <span className="cat-badge cat-badge-ok">{p.estoque} disponível(is)</span>
-                      )}
-                      {WHATSAPP_NUMERO && (
-                        <button className="cat-wa-btn" onClick={() => pedirNoWhatsapp(p)}>
-                          <MessageCircle size={14} /> Pedir pelo WhatsApp
-                        </button>
-                      )}
+                      <div className="cat-card-body">
+                        <div className="cat-card-name">{p.nome}</div>
+                        {!p.sobEncomenda && p.categoria && <div className="cat-card-cat">{p.categoria}</div>}
+                        {metaLineCatalogo(p) && <div className="cat-card-meta">{metaLineCatalogo(p)}</div>}
+
+                        {!p.sobEncomenda && temVariosTamanhos && (
+                          <div className="cat-tamanhos">
+                            {g.variantes.map((v) => (
+                              <button
+                                key={v.id}
+                                type="button"
+                                className={v.id === p.id ? "on" : ""}
+                                onClick={() => setEscolhas((e) => ({ ...e, [g.id]: v.id }))}
+                              >
+                                {v.tamanho || "Único"}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="cat-price">{BRL(p.preco)}</div>
+                        {p.sobEncomenda ? (
+                          <span className="cat-badge cat-badge-encomenda">Sob encomenda</span>
+                        ) : (
+                          <span className="cat-badge cat-badge-ok">
+                            {p.estoque} disponível(is){p.tamanho ? ` no ${p.tamanho}` : ""}
+                          </span>
+                        )}
+                        {WHATSAPP_NUMERO && (
+                          <button className="cat-wa-btn" onClick={() => pedirNoWhatsapp(p)}>
+                            <MessageCircle size={14} /> Pedir pelo WhatsApp
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </>
