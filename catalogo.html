@@ -114,6 +114,28 @@ function sheetToEncomenda(row) {
   };
 }
 
+// Abas de categoria. Cada uma casa com o conteúdo da coluna "Categoria"
+// do produto, ignorando acentos e maiúsculas — assim "Bone", "boné" e
+// "Bonés" caem todos na mesma aba.
+const CATEGORIAS = [
+  { id: "todos", rotulo: "Todos", termos: [] },
+  { id: "futebol", rotulo: "Camisa Futebol", termos: ["futebol"] },
+  { id: "nba", rotulo: "Camisa NBA", termos: ["nba", "basquete"] },
+  { id: "bone", rotulo: "Boné", termos: ["bone"] },
+  { id: "short", rotulo: "Short", termos: ["short", "bermuda", "calcao"] },
+  { id: "perfume", rotulo: "Perfume", termos: ["perfume"] },
+];
+
+function combinaCategoria(produto, idCategoria) {
+  if (idCategoria === "todos") return true;
+  const alvo = CATEGORIAS.find((x) => x.id === idCategoria);
+  if (!alvo) return true;
+  // olhamos categoria e nome, para pegar casos em que o tipo do item
+  // só aparece no nome do produto
+  const texto = normKey(`${produto.categoria || ""} ${produto.nome || ""}`);
+  return alvo.termos.some((t) => texto.includes(t));
+}
+
 function CatalogoPublico() {
   const [products, setProducts] = useState([]);
   const [encomendas, setEncomendas] = useState([]);
@@ -122,6 +144,7 @@ function CatalogoPublico() {
   const [search, setSearch] = useState("");
   const [view, setView] = useState("disponivel"); // "disponivel" | "encomenda"
   const [lightbox, setLightbox] = useState(null); // { produto, indice }
+  const [categoria, setCategoria] = useState("todos");
   const toqueX = useRef(null);
 
   useEffect(() => {
@@ -149,15 +172,17 @@ function CatalogoPublico() {
 
   const filtrados = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return disponiveis;
-    return disponiveis.filter(
-      (p) =>
+    return disponiveis.filter((p) => {
+      if (!combinaCategoria(p, categoria)) return false;
+      if (!q) return true;
+      return (
         p.nome.toLowerCase().includes(q) ||
         (p.categoria || "").toLowerCase().includes(q) ||
         (p.campeonato || "").toLowerCase().includes(q) ||
         (p.temporada || "").toLowerCase().includes(q)
-    );
-  }, [disponiveis, search]);
+      );
+    });
+  }, [disponiveis, search, categoria]);
 
   function metaLineCatalogo(p) {
     if (p.sobEncomenda) return [p.versao, p.temporada].filter(Boolean).join(" · ");
@@ -241,6 +266,16 @@ function CatalogoPublico() {
         .cat-toggle { display: flex; gap: 6px; background: var(--panel); padding: 4px; border-radius: 10px; border: 1px solid var(--line); margin-bottom: 16px; max-width: 360px; }
         .cat-toggle button { flex: 1; padding: 9px 6px; border: none; background: transparent; border-radius: 7px; font-size: 13.5px; font-weight: 500; cursor: pointer; color: var(--ink-soft); font-family: inherit; }
         .cat-toggle button.active { background: var(--sage-bg); color: var(--sage); }
+        .cat-cats { display: flex; gap: 7px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 16px; -webkit-overflow-scrolling: touch; }
+        .cat-cats::-webkit-scrollbar { display: none; }
+        .cat-cats button {
+          flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+          padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line);
+          background: var(--panel); color: var(--ink-soft); font-size: 13.5px; font-weight: 500;
+          font-family: inherit; cursor: pointer; white-space: nowrap;
+        }
+        .cat-cats button.on { background: var(--rust); border-color: var(--rust); color: #17130B; font-weight: 600; }
+        .cat-cats-qtd { font-size: 11px; opacity: 0.7; font-family: 'IBM Plex Mono', monospace; }
         .cat-card-img.clicavel { cursor: pointer; }
         .cat-photo-count { display: flex; align-items: center; gap: 3px; }
         .cat-lb {
@@ -274,6 +309,8 @@ function CatalogoPublico() {
           .cat-lb-nome { font-size: 4vw; }
           .cat-lb-preco { font-size: 4.4vw; }
           .cat-lb-pontos span { width: 2.2vw; height: 2.2vw; }
+          .cat-cats button { font-size: 3.4vw; padding: 2.2vw 3.8vw; }
+          .cat-cats-qtd { font-size: 2.8vw; }
         }
       `}</style>
       <div className="cat-wrap">
@@ -289,17 +326,37 @@ function CatalogoPublico() {
         ) : (
           <>
             <div className="cat-toggle">
-              <button type="button" className={view === "disponivel" ? "active" : ""} onClick={() => setView("disponivel")}>Disponível agora</button>
+              <button type="button" className={view === "disponivel" ? "active" : ""} onClick={() => setView("disponivel")}>Disponível</button>
               <button type="button" className={view === "encomenda" ? "active" : ""} onClick={() => setView("encomenda")}>Sob encomenda</button>
             </div>
             <div className="cat-search">
               <Search size={16} />
               <input placeholder="Buscar por time, campeonato…" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
+
+            <div className="cat-cats">
+              {CATEGORIAS.map((cat) => {
+                const qtd = cat.id === "todos"
+                  ? disponiveis.length
+                  : disponiveis.filter((p) => combinaCategoria(p, cat.id)).length;
+                if (qtd === 0 && cat.id !== "todos" && categoria !== cat.id) return null;
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    className={categoria === cat.id ? "on" : ""}
+                    onClick={() => setCategoria(cat.id)}
+                  >
+                    {cat.rotulo} <span className="cat-cats-qtd">{qtd}</span>
+                  </button>
+                );
+              })}
+            </div>
+
             {filtrados.length === 0 ? (
               <div className="cat-empty">
                 <ShoppingBag size={30} style={{ marginBottom: 10, opacity: 0.5 }} />
-                <div>{disponiveis.length === 0 ? (view === "encomenda" ? "Nenhum item sob encomenda no momento." : "Nenhum produto disponível no momento.") : "Nada encontrado para essa busca."}</div>
+                <div>{disponiveis.length === 0 ? (view === "encomenda" ? "Nenhum item sob encomenda no momento." : "Nenhum produto disponível no momento.") : "Nada encontrado nessa categoria ou busca."}</div>
               </div>
             ) : (
               <div className="cat-grid">
