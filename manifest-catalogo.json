@@ -3,7 +3,7 @@
   "short_name": "Catalogo 1971",
   "description": "Catalogo de produtos disponiveis da 1971 Sportswear.",
   "start_url": "/catalogo.html",
-  "scope": "/",
+  "scope": "/catalogo.html",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0E0C09",
