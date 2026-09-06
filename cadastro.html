@@ -455,27 +455,42 @@ function CadastroProduto() {
         .cad-vazio { text-align: center; padding: 40px 20px; color: var(--ink-soft); font-size: 14px; display: flex; align-items: center; justify-content: center; gap: 8px; }
         .cad-voltar { width: 100%; margin-top: 10px; padding: 13px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font-size: 14px; font-family: inherit; cursor: pointer; }
 
-        @media (min-width: 700px) {
-          .cad-wrap { max-width: 760px; }
-          .cad-title { font-size: 30px; }
-          .cad-sub { font-size: 16px; }
-          .cad-destino button { font-size: 19px; padding: 15px 8px; }
-          .cad-field label { font-size: 16px; }
-          .cad-field input, .cad-field select { font-size: 20px; padding: 14px 15px; }
-          .cad-submit { font-size: 21px; padding: 19px; }
-          .cad-check { font-size: 17px; }
-          .cad-check input { width: 22px; height: 22px; }
-          .cad-derived { font-size: 16px; }
-          .cad-ok { font-size: 17px; }
-          .cad-links a { font-size: 17px; padding: 15px; }
-          .cad-thumb, .cad-add { width: 88px; height: 88px; }
-          .cad-add span { font-size: 12px; }
-          .cad-item-nome { font-size: 18px; }
-          .cad-item-meta { font-size: 14px; }
-          .cad-item-tag { font-size: 13px; }
-          .cad-item-thumb { width: 66px; height: 66px; }
-          .cad-voltar { font-size: 17px; padding: 16px; }
-          .cad-vazio { font-size: 17px; }
+        @media (min-width: 700px) and (pointer: coarse) {
+          .cad-root { padding: 3vw 4vw 14vw; }
+          .cad-wrap { max-width: 100%; }
+          .cad-header { gap: 3vw; margin-bottom: 4.5vw; }
+          .cad-header img { width: 11vw !important; height: 11vw !important; }
+          .cad-title { font-size: 5.6vw; }
+          .cad-sub { font-size: 3.2vw; }
+          .cad-destino { padding: 1vw; border-radius: 2.5vw; margin-bottom: 3.5vw; }
+          .cad-destino button { font-size: 3.6vw; padding: 3vw 1.5vw; border-radius: 1.8vw; }
+          .cad-card { padding: 4vw; border-radius: 3vw; margin-bottom: 3.5vw; }
+          .cad-field { margin-bottom: 3.5vw; }
+          .cad-field label { font-size: 3.2vw; margin-bottom: 1.3vw; }
+          .cad-field input, .cad-field select { font-size: 4.1vw; padding: 3vw 3.2vw; border-radius: 2.3vw; }
+          .cad-row2 { gap: 2.6vw; }
+          .cad-derived { font-size: 3.2vw; padding: 2.4vw 2.8vw; }
+          .cad-submit { font-size: 4.3vw; padding: 4vw; border-radius: 2.6vw; gap: 2vw; }
+          .cad-submit svg { width: 4.6vw; height: 4.6vw; }
+          .cad-check { font-size: 3.4vw; gap: 2vw; margin: 3vw 0; }
+          .cad-check input { width: 4.4vw; height: 4.4vw; }
+          .cad-ok { font-size: 3.5vw; padding: 3vw 3.4vw; }
+          .cad-links { gap: 2.6vw; margin-top: 4.5vw; }
+          .cad-links a { font-size: 3.5vw; padding: 3vw; border-radius: 2.3vw; }
+          .cad-gallery { gap: 2vw; }
+          .cad-thumb, .cad-add { width: 17.5vw; height: 17.5vw; border-radius: 2.1vw; }
+          .cad-add svg { width: 4.6vw; height: 4.6vw; }
+          .cad-add span { font-size: 2.5vw; }
+          .cad-thumb button { width: 4.6vw; height: 4.6vw; font-size: 3vw; }
+          .cad-lista { gap: 2vw; }
+          .cad-item { padding: 2.6vw; gap: 2.8vw; border-radius: 2.6vw; }
+          .cad-item-thumb { width: 13.5vw; height: 13.5vw; border-radius: 2.1vw; }
+          .cad-item-nome { font-size: 3.8vw; }
+          .cad-item-meta { font-size: 3vw; }
+          .cad-item-tag { font-size: 2.7vw; padding: 0.5vw 2vw; }
+          .cad-vazio { font-size: 3.6vw; padding: 10vw 5vw; }
+          .cad-voltar { font-size: 3.6vw; padding: 3.4vw; border-radius: 2.6vw; }
+          .cad-toast { font-size: 3.6vw; padding: 3vw 5vw; }
         }
 
       `}</style>
