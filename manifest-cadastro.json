@@ -3,7 +3,7 @@
   "short_name": "Cadastro 1971",
   "description": "Cadastro rapido de produtos da 1971 Sportswear.",
   "start_url": "/cadastro.html",
-  "scope": "/cadastro.html",
+  "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0E0C09",

@@ -3,7 +3,7 @@
   "short_name": "Estoque 1971",
   "description": "Controle de estoque, entradas, saidas e catalogo da 1971 Sportswear.",
   "start_url": "/index.html",
-  "scope": "/index.html",
+  "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0E0C09",
