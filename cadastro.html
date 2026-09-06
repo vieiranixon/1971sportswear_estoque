@@ -179,6 +179,7 @@ function CadastroProduto() {
   const [form, setForm] = useState(emptyForm);
   const [salvando, setSalvando] = useState(false);
   const [uploadingImg, setUploadingImg] = useState(false);
+  const [progresso, setProgresso] = useState(null); // { atual, total }
   const [toast, setToast] = useState(null);
   const [ultimoSalvo, setUltimoSalvo] = useState(null);
   const [manterDados, setManterDados] = useState(true);
@@ -225,21 +226,48 @@ function CadastroProduto() {
     setTimeout(() => setToast(null), 3000);
   }
 
-  async function handleAddImage(file) {
-    if (!file) return;
+  // Sobe uma lista de fotos, uma de cada vez (o Apps Script não aguenta
+  // vários envios simultâneos). Cada foto que chega já aparece na galeria,
+  // e uma que falhe não interrompe as demais.
+  async function enviarFotos(fileList, aoConcluirCada) {
+    const arquivos = Array.from(fileList || []);
+    if (arquivos.length === 0) return;
+
     setUploadingImg(true);
-    try {
-      const dataUrl = await resizeImage(file);
-      const res = await gasPost({ action: "uploadImage", base64: dataUrl, mimeType: "image/jpeg", filename: uid() + ".jpg" });
-      if (res && res.ok && res.url) {
-        setForm((f) => ({ ...f, imagens: [...(f.imagens || []), res.url] }));
-      } else {
-        showToast("Não consegui salvar a foto no Drive", "erro");
+    setProgresso({ atual: 0, total: arquivos.length });
+
+    let falhas = 0;
+    for (let i = 0; i < arquivos.length; i++) {
+      setProgresso({ atual: i + 1, total: arquivos.length });
+      try {
+        const dataUrl = await resizeImage(arquivos[i]);
+        const res = await gasPost({ action: "uploadImage", base64: dataUrl, mimeType: "image/jpeg", filename: uid() + ".jpg" });
+        if (res && res.ok && res.url) {
+          aoConcluirCada(res.url);
+        } else {
+          falhas++;
+        }
+      } catch (e) {
+        falhas++;
       }
-    } catch (e) {
-      showToast("Não foi possível enviar a foto", "erro");
     }
+
     setUploadingImg(false);
+    setProgresso(null);
+
+    if (falhas === arquivos.length) {
+      showToast(arquivos.length === 1 ? "Não consegui enviar a foto" : "Não consegui enviar as fotos", "erro");
+    } else if (falhas > 0) {
+      showToast(`${arquivos.length - falhas} de ${arquivos.length} fotos enviadas`, "erro");
+    } else if (arquivos.length > 1) {
+      showToast(`${arquivos.length} fotos enviadas`);
+    }
+  }
+
+  function handleAddImage(fileList) {
+    return enviarFotos(fileList, (url) =>
+      setForm((f) => ({ ...f, imagens: [...(f.imagens || []), url] }))
+    );
   }
 
   function removeImageAt(i) {
@@ -290,21 +318,8 @@ function CadastroProduto() {
     setFotosSelecionado([]);
   }
 
-  async function handleAddImageExistente(file) {
-    if (!file) return;
-    setUploadingImg(true);
-    try {
-      const dataUrl = await resizeImage(file);
-      const res = await gasPost({ action: "uploadImage", base64: dataUrl, mimeType: "image/jpeg", filename: uid() + ".jpg" });
-      if (res && res.ok && res.url) {
-        setFotosSelecionado((prev) => [...prev, res.url]);
-      } else {
-        showToast("Não consegui salvar a foto no Drive", "erro");
-      }
-    } catch (e) {
-      showToast("Não foi possível enviar a foto", "erro");
-    }
-    setUploadingImg(false);
+  function handleAddImageExistente(fileList) {
+    return enviarFotos(fileList, (url) => setFotosSelecionado((prev) => [...prev, url]));
   }
 
   async function salvarFotos() {
@@ -454,7 +469,6 @@ function CadastroProduto() {
         .cad-item-tag { font-size: 10.5px; font-weight: 600; color: var(--rust); border: 1px solid var(--rust); border-radius: 999px; padding: 2px 8px; white-space: nowrap; flex-shrink: 0; }
         .cad-vazio { text-align: center; padding: 40px 20px; color: var(--ink-soft); font-size: 14px; display: flex; align-items: center; justify-content: center; gap: 8px; }
         .cad-voltar { width: 100%; margin-top: 10px; padding: 13px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font-size: 14px; font-family: inherit; cursor: pointer; }
-
         @media (min-width: 700px) and (pointer: coarse) {
           .cad-root { padding: 3vw 4vw 14vw; }
           .cad-wrap { max-width: 100%; }
@@ -492,7 +506,6 @@ function CadastroProduto() {
           .cad-voltar { font-size: 3.6vw; padding: 3.4vw; border-radius: 2.6vw; }
           .cad-toast { font-size: 3.6vw; padding: 3vw 5vw; }
         }
-
       `}</style>
 
       <div className="cad-wrap">
@@ -541,11 +554,11 @@ function CadastroProduto() {
                       ))}
                       <div className="cad-add" onClick={() => !uploadingImg && fotoExistenteRef.current?.click()}>
                         {uploadingImg ? <Loader2 className="spin" size={18} /> : <ImagePlus size={18} />}
-                        <span>{uploadingImg ? "Enviando…" : "Foto"}</span>
+                        <span>{uploadingImg ? (progresso ? `${progresso.atual}/${progresso.total}` : "Enviando…") : "Fotos"}</span>
                       </div>
                     </div>
-                    <input ref={fotoExistenteRef} type="file" accept="image/*" hidden
-                      onChange={(e) => { handleAddImageExistente(e.target.files?.[0]); e.target.value = ""; }} />
+                    <input ref={fotoExistenteRef} type="file" accept="image/*" multiple hidden
+                      onChange={(e) => { handleAddImageExistente(e.target.files); e.target.value = ""; }} />
                   </div>
                 </div>
 
@@ -620,11 +633,11 @@ function CadastroProduto() {
                 ))}
                 <div className="cad-add" onClick={() => !uploadingImg && fileRef.current?.click()}>
                   {uploadingImg ? <Loader2 className="spin" size={18} /> : <ImagePlus size={18} />}
-                  <span>{uploadingImg ? "Enviando…" : "Foto"}</span>
+                  <span>{uploadingImg ? (progresso ? `${progresso.atual}/${progresso.total}` : "Enviando…") : "Fotos"}</span>
                 </div>
               </div>
-              <input ref={fileRef} type="file" accept="image/*" hidden
-                onChange={(e) => { handleAddImage(e.target.files?.[0]); e.target.value = ""; }} />
+              <input ref={fileRef} type="file" accept="image/*" multiple hidden
+                onChange={(e) => { handleAddImage(e.target.files); e.target.value = ""; }} />
             </div>
           </div>
 
@@ -751,9 +764,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<CadastroProduto />)
   (function () {
     var source = document.getElementById("jsx-src").textContent;
     try {
-      var compiled = Babel.transform(source, {
-        presets: [["react", { runtime: "classic" }]]
-      }).code;
+      var compiled = Babel.transform(source, { presets: [["react", { runtime: "classic" }]] }).code;
       (0, eval)(compiled);
     } catch (err) {
       document.getElementById("root").innerHTML =
@@ -765,9 +776,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<CadastroProduto />)
 <script>
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", function () {
-      navigator.serviceWorker.register("/sw.js").catch(function (e) {
-        console.log("SW não registrado:", e);
-      });
+      navigator.serviceWorker.register("/sw.js").catch(function (e) { console.log("SW não registrado:", e); });
     });
   }
 </script>
