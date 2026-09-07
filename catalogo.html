@@ -133,6 +133,16 @@ function gradeDoModelo(variantes) {
   return null;
 }
 
+// As imagens do Drive aceitam um sufixo de largura. Sem ele vem uma versão
+// reduzida; pedindo o tamanho certo, o card fica nítido e a foto ampliada
+// não fica borrada.
+function imgURL(url, largura) {
+  const u = String(url || "");
+  if (!u) return u;
+  if (!u.includes("googleusercontent.com/")) return u;
+  return u.replace(/=[swh]\d+(-[a-z0-9]+)*$/i, "") + "=w" + largura;
+}
+
 function posicaoTamanho(t) {
   const i = ORDEM_TAMANHOS.indexOf(String(t || "").trim().toUpperCase());
   return i === -1 ? 999 : i;
@@ -385,7 +395,7 @@ function CatalogoPublico() {
           display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 2;
         }
         .cat-lb-palco { position: relative; width: 100%; max-width: 620px; flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; }
-        .cat-lb-palco img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 10px; display: block; }
+        .cat-lb-palco img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 10px; display: block; background: #FFFFFF; }
         .cat-lb-nav {
           position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; border-radius: 50%;
           border: 1px solid var(--line); background: rgba(24,21,15,0.85); color: var(--ink);
@@ -476,7 +486,7 @@ function CatalogoPublico() {
                       >
                         {fotos[0] ? (
                           <>
-                            <img src={fotos[0]} alt={p.nome} />
+                            <img src={imgURL(fotos[0], 800)} alt={p.nome} loading="lazy" />
                             {fotos.length > 1 && (
                               <span className="cat-photo-count">
                                 <Images size={11} /> {fotos.length}
@@ -551,7 +561,7 @@ function CatalogoPublico() {
               toqueX.current = null;
             }}
           >
-            <img src={lightbox.produto.imagens[lightbox.indice]} alt={lightbox.produto.nome} />
+            <img src={imgURL(lightbox.produto.imagens[lightbox.indice], 1600)} alt={lightbox.produto.nome} />
 
             {lightbox.produto.imagens.length > 1 && (
               <>
