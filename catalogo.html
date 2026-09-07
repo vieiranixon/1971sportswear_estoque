@@ -118,6 +118,21 @@ function sheetToEncomenda(row) {
 // lista vai para o fim, na ordem em que foi cadastrado.
 const ORDEM_TAMANHOS = ["16", "18", "20", "22", "24", "26", "28", "P", "M", "G", "GG", "3G", "XGG", "XXG", "4G", "XXXG"];
 
+const GRADE_ADULTO = ["P", "M", "G", "GG", "3G", "4G"];
+const GRADE_INFANTIL = ["16", "18", "20", "22", "24", "26", "28"];
+
+// Descobre se o modelo é adulto ou infantil pelos tamanhos que existem na
+// planilha, para mostrar a grade completa mesmo nos tamanhos que você nunca
+// cadastrou. Se não bater com nenhuma das duas (boné, perfume, "Único"),
+// mostramos só o que existe.
+function gradeDoModelo(variantes) {
+  const tams = variantes.map((v) => String(v.tamanho || "").trim().toUpperCase()).filter(Boolean);
+  if (tams.length === 0) return null;
+  if (tams.every((t) => GRADE_ADULTO.includes(t))) return GRADE_ADULTO;
+  if (tams.every((t) => GRADE_INFANTIL.includes(t))) return GRADE_INFANTIL;
+  return null;
+}
+
 function posicaoTamanho(t) {
   const i = ORDEM_TAMANHOS.indexOf(String(t || "").trim().toUpperCase());
   return i === -1 ? 999 : i;
@@ -139,10 +154,27 @@ function agruparPorTamanho(lista) {
     mapa.get(k).variantes.push(p);
   });
   return Array.from(mapa.values())
-    .map((g) => ({
-      ...g,
-      variantes: g.variantes.slice().sort((a, b) => posicaoTamanho(a.tamanho) - posicaoTamanho(b.tamanho)),
-    }))
+    .map((g) => {
+      const variantes = g.variantes.slice().sort((a, b) => posicaoTamanho(a.tamanho) - posicaoTamanho(b.tamanho));
+      const grade = gradeDoModelo(variantes);
+
+      // Cada posição da grade vira uma "pílula". Se não existir linha para
+      // aquele tamanho, ela aparece igual a um esgotado.
+      const pilulas = grade
+        ? grade.map((t) => {
+            const v = variantes.find((x) => String(x.tamanho || "").trim().toUpperCase() === t);
+            return v
+              ? { tamanho: t, variante: v, disponivel: Number(v.estoque) > 0 }
+              : { tamanho: t, variante: null, disponivel: false };
+          })
+        : variantes.map((v) => ({
+            tamanho: v.tamanho || "Único",
+            variante: v,
+            disponivel: Number(v.estoque) > 0,
+          }));
+
+      return { ...g, variantes, pilulas };
+    })
     // um modelo só aparece se ainda houver ao menos um tamanho em estoque
     .filter((g) => g.sobEncomenda || g.variantes.some((v) => Number(v.estoque) > 0));
 }
@@ -331,7 +363,16 @@ function CatalogoPublico() {
           font-family: 'IBM Plex Mono', monospace; cursor: pointer;
         }
         .cat-tamanhos button.on { background: var(--rust); border-color: var(--rust); color: #17130B; }
-        .cat-tamanhos button.off { opacity: 0.32; background: transparent; border-style: dashed; text-decoration: line-through; cursor: not-allowed; }
+        .cat-tamanhos button.off {
+          color: var(--ink-soft); opacity: 0.45; background: transparent; cursor: not-allowed;
+          position: relative; overflow: hidden;
+        }
+        /* barra transversal atravessando a pílula, de canto a canto */
+        .cat-tamanhos button.off::after {
+          content: ""; position: absolute; left: -12%; right: -12%; top: 50%;
+          height: 1.5px; background: var(--ink-soft); opacity: 0.75;
+          transform: rotate(-32deg); transform-origin: center;
+        }
         .cat-card-img.clicavel { cursor: pointer; }
         .cat-photo-count { display: flex; align-items: center; gap: 3px; }
         .cat-lb {
@@ -425,7 +466,7 @@ function CatalogoPublico() {
                   const fotos = (p.imagens && p.imagens.length)
                     ? p.imagens
                     : (g.variantes.find((v) => v.imagens && v.imagens.length)?.imagens || []);
-                  const temVariosTamanhos = g.variantes.length > 1 || (g.variantes[0] && g.variantes[0].tamanho);
+                  const temTamanhos = g.pilulas.length > 1 || (g.pilulas[0] && g.pilulas[0].tamanho && g.pilulas[0].tamanho !== "Único");
 
                   return (
                     <div className="cat-card" key={g.id}>
@@ -449,20 +490,20 @@ function CatalogoPublico() {
                         {!p.sobEncomenda && p.categoria && <div className="cat-card-cat">{p.categoria}</div>}
                         {metaLineCatalogo(p) && <div className="cat-card-meta">{metaLineCatalogo(p)}</div>}
 
-                        {!p.sobEncomenda && temVariosTamanhos && (
+                        {!p.sobEncomenda && temTamanhos && (
                           <div className="cat-tamanhos">
-                            {g.variantes.map((v) => {
-                              const semEstoque = Number(v.estoque) <= 0;
+                            {g.pilulas.map((pil) => {
+                              const selecionada = pil.variante && pil.variante.id === p.id;
                               return (
                                 <button
-                                  key={v.id}
+                                  key={pil.tamanho}
                                   type="button"
-                                  disabled={semEstoque}
-                                  title={semEstoque ? "Esgotado" : ""}
-                                  className={`${v.id === p.id ? "on" : ""} ${semEstoque ? "off" : ""}`}
-                                  onClick={() => !semEstoque && setEscolhas((e) => ({ ...e, [g.id]: v.id }))}
+                                  disabled={!pil.disponivel}
+                                  title={pil.disponivel ? "" : "Esgotado"}
+                                  className={`${selecionada ? "on" : ""} ${pil.disponivel ? "" : "off"}`}
+                                  onClick={() => pil.disponivel && setEscolhas((e) => ({ ...e, [g.id]: pil.variante.id }))}
                                 >
-                                  {v.tamanho || "Único"}
+                                  {pil.tamanho}
                                 </button>
                               );
                             })}
