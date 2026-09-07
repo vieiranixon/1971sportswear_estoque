@@ -116,7 +116,7 @@ function sheetToEncomenda(row) {
 
 // Ordem em que os tamanhos aparecem no card. Qualquer tamanho fora desta
 // lista vai para o fim, na ordem em que foi cadastrado.
-const ORDEM_TAMANHOS = ["PP", "P", "M", "G", "GG", "3G", "XGG", "XXG", "4G", "XXXG"];
+const ORDEM_TAMANHOS = ["16", "18", "20", "22", "24", "26", "28", "P", "M", "G", "GG", "3G", "XGG", "XXG", "4G", "XXXG"];
 
 function posicaoTamanho(t) {
   const i = ORDEM_TAMANHOS.indexOf(String(t || "").trim().toUpperCase());

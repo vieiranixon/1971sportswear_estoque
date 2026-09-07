@@ -169,8 +169,23 @@ async function gasGet() {
   return res.json();
 }
 
+// Ordem dos tamanhos usada nas listas e no cadastro em lote.
+const TAMANHOS_ADULTO = ["P", "M", "G", "GG", "3G", "4G"];
+const TAMANHOS_INFANTIL = ["16", "18", "20", "22", "24", "26", "28"];
+const ORDEM_TAMANHOS = [...TAMANHOS_INFANTIL, ...TAMANHOS_ADULTO];
+
+function posicaoTamanho(t) {
+  const i = ORDEM_TAMANHOS.indexOf(String(t || "").trim().toUpperCase());
+  return i === -1 ? 999 : i;
+}
+
+// Linhas que só diferem pelo tamanho pertencem ao mesmo modelo.
+function chaveModelo(campos) {
+  return normKey(campos.join("|"));
+}
+
 const emptyForm = {
-  nome: "", tamanho: "", categoria: "", versao: "", campeonato: "", genero: "",
+  nome: "", tamanho: "", qtdPorTamanho: {}, categoria: "", versao: "", campeonato: "", genero: "",
   temporada: "", custo: "", preco: "", estoque: "", estoqueMinimo: "", imagens: [],
 };
 
@@ -276,8 +291,11 @@ function CadastroProduto() {
 
   // ---------- Modo "Adicionar fotos" em produto já cadastrado ----------
 
+  // Agrupa as linhas por modelo (mesmo nome/versão/temporada...), já que as
+  // fotos são do produto, não do tamanho. Assim você envia uma vez só e vale
+  // para P, M, G, GG… de uma vez.
   const listaExistentes = (() => {
-    const itens = [
+    const linhas = [
       ...rawProducts.map((raw) => ({ raw, origem: "estoque" })),
       ...rawEncomendas.map((raw) => ({ raw, origem: "encomenda" })),
     ].map((item) => ({
@@ -286,31 +304,75 @@ function CadastroProduto() {
       nome: String(pickByNorm(item.raw, ["nome do produto", "nome"]) || ""),
       tamanho: String(pickByNorm(item.raw, ["tamanho"]) || ""),
       versao: String(pickByNorm(item.raw, ["versao"]) || ""),
+      campeonato: String(pickByNorm(item.raw, ["campeonato", "liga"]) || ""),
+      genero: String(pickByNorm(item.raw, ["genero"]) || ""),
       temporada: String(pickByNorm(item.raw, ["temporada"]) || ""),
+      categoria: String(pickByNorm(item.raw, ["categoria"]) || ""),
       fotos: imagensDaLinha(item.raw),
     }));
 
+    const mapa = new Map();
+    linhas.forEach((l) => {
+      const k = chaveModelo([l.nome, l.versao, l.campeonato, l.genero, l.temporada, l.categoria, l.origem]);
+      if (!mapa.has(k)) mapa.set(k, { id: k, base: l, origem: l.origem, variantes: [] });
+      mapa.get(k).variantes.push(l);
+    });
+
+    const grupos = Array.from(mapa.values()).map((g) => {
+      const variantes = g.variantes.slice().sort((a, b) => posicaoTamanho(a.tamanho) - posicaoTamanho(b.tamanho));
+      // fotos do modelo = as do primeiro tamanho que tiver alguma
+      const comFoto = variantes.find((v) => v.fotos.length > 0);
+      return {
+        ...g,
+        variantes,
+        nome: g.base.nome,
+        versao: g.base.versao,
+        temporada: g.base.temporada,
+        tamanhos: variantes.map((v) => v.tamanho).filter(Boolean),
+        fotos: comFoto ? comFoto.fotos : [],
+      };
+    });
+
     const q = buscaFotos.trim().toLowerCase();
-    return itens.filter((it) => {
-      if (soSemFoto && it.fotos.length > 0) return false;
+    return grupos.filter((g) => {
+      if (soSemFoto && g.fotos.length > 0) return false;
       if (!q) return true;
       return (
-        it.nome.toLowerCase().includes(q) ||
-        it.tamanho.toLowerCase().includes(q) ||
-        it.versao.toLowerCase().includes(q) ||
-        it.temporada.toLowerCase().includes(q)
+        g.nome.toLowerCase().includes(q) ||
+        g.tamanhos.join(" ").toLowerCase().includes(q) ||
+        (g.versao || "").toLowerCase().includes(q) ||
+        (g.temporada || "").toLowerCase().includes(q)
       );
     });
   })();
 
-  const totalSemFoto = [
-    ...rawProducts.map((raw) => imagensDaLinha(raw)),
-    ...rawEncomendas.map((raw) => imagensDaLinha(raw)),
-  ].filter((f) => f.length === 0).length;
+  const totalSemFoto = listaExistentes.length > 0 || soSemFoto
+    ? (() => {
+        const todos = [
+          ...rawProducts.map((raw) => ({ raw, origem: "estoque" })),
+          ...rawEncomendas.map((raw) => ({ raw, origem: "encomenda" })),
+        ];
+        const mapa = new Map();
+        todos.forEach(({ raw, origem }) => {
+          const k = chaveModelo([
+            String(pickByNorm(raw, ["nome do produto", "nome"]) || ""),
+            String(pickByNorm(raw, ["versao"]) || ""),
+            String(pickByNorm(raw, ["campeonato", "liga"]) || ""),
+            String(pickByNorm(raw, ["genero"]) || ""),
+            String(pickByNorm(raw, ["temporada"]) || ""),
+            String(pickByNorm(raw, ["categoria"]) || ""),
+            origem,
+          ]);
+          const temFoto = imagensDaLinha(raw).length > 0;
+          mapa.set(k, (mapa.get(k) || false) || temFoto);
+        });
+        return Array.from(mapa.values()).filter((temFoto) => !temFoto).length;
+      })()
+    : 0;
 
-  function abrirItem(item) {
-    setSelecionado(item);
-    setFotosSelecionado(item.fotos);
+  function abrirItem(grupo) {
+    setSelecionado(grupo);
+    setFotosSelecionado(grupo.fotos);
   }
 
   function fecharItem() {
@@ -325,24 +387,37 @@ function CadastroProduto() {
   async function salvarFotos() {
     if (!selecionado) return;
     setSalvando(true);
+    let falhas = 0;
     try {
-      // Copiamos a linha exatamente como está na planilha e trocamos só a
-      // coluna de imagem — assim nenhum outro campo é alterado por engano.
-      const data = { ...selecionado.raw };
-      const idKey = Object.keys(data).find((k) => normKey(k) === "id");
-      if (idKey) delete data[idKey];
+      // As mesmas fotos vão para TODOS os tamanhos do modelo. Para cada linha,
+      // copiamos exatamente o que já está na planilha e trocamos só a coluna
+      // de imagem — nenhum outro campo é alterado.
+      for (const v of selecionado.variantes) {
+        const data = { ...v.raw };
+        const idKey = Object.keys(data).find((k) => normKey(k) === "id");
+        if (idKey) delete data[idKey];
 
-      let colImagem = acharColunaImagem(selecionado.raw);
-      if (!colImagem) colImagem = "Imagem";
-      data[colImagem] = fotosSelecionado.join("\n");
+        const colImagem = acharColunaImagem(v.raw) || "Imagem";
+        data[colImagem] = fotosSelecionado.join("\n");
 
-      const payload = selecionado.origem === "encomenda"
-        ? { action: "upsertEncomenda", id: selecionado.id, data }
-        : { id: selecionado.id, data };
+        const payload = v.origem === "encomenda"
+          ? { action: "upsertEncomenda", id: v.id, data }
+          : { id: v.id, data };
 
-      await gasPost(payload);
-      showToast(`Fotos salvas em "${selecionado.nome}"`);
-      fecharItem();
+        try {
+          await gasPost(payload);
+        } catch (e) {
+          falhas++;
+        }
+      }
+
+      const n = selecionado.variantes.length;
+      if (falhas === 0) {
+        showToast(n > 1 ? `Fotos salvas em ${n} tamanhos de "${selecionado.nome}"` : `Fotos salvas em "${selecionado.nome}"`);
+        fecharItem();
+      } else {
+        showToast(`${n - falhas} de ${n} tamanhos salvos — tente de novo`, "erro");
+      }
       await carregarLista();
     } catch (err) {
       showToast("Não consegui salvar as fotos. Tente de novo.", "erro");
@@ -370,9 +445,8 @@ function CadastroProduto() {
         };
         await gasPost({ action: "upsertEncomenda", id, data: encomendaToSheetRow(clean, encHeadersRef.current) });
       } else {
-        const clean = {
+        const base = {
           nome: form.nome.trim(),
-          tamanho: form.tamanho.trim(),
           categoria: form.categoria.trim(),
           versao: form.versao.trim(),
           campeonato: form.campeonato.trim(),
@@ -380,20 +454,37 @@ function CadastroProduto() {
           temporada: form.temporada.trim(),
           custo: Number(form.custo) || 0,
           preco: Number(form.preco) || 0,
-          estoque: Number(form.estoque) || 0,
           estoqueMinimo: Number(form.estoqueMinimo) || 0,
           imagens: form.imagens || [],
         };
-        await gasPost({ id, data: productToSheetRow(clean, headersRef.current) });
+
+        // Se você marcou tamanhos na grade, criamos UMA LINHA POR TAMANHO,
+        // cada uma com a quantidade informada. Sem nenhum marcado, cai no
+        // cadastro simples (um tamanho digitado à mão).
+        const selecionados = Object.entries(form.qtdPorTamanho || {})
+          .filter(([, qtd]) => Number(qtd) > 0);
+
+        if (selecionados.length > 0) {
+          for (const [tam, qtd] of selecionados) {
+            const clean = { ...base, tamanho: tam, estoque: Number(qtd) || 0 };
+            await gasPost({ id: uid(), data: productToSheetRow(clean, headersRef.current) });
+          }
+        } else {
+          const clean = { ...base, tamanho: form.tamanho.trim(), estoque: Number(form.estoque) || 0 };
+          await gasPost({ id, data: productToSheetRow(clean, headersRef.current) });
+        }
       }
 
-      setUltimoSalvo({ nome: form.nome.trim(), destino });
-      showToast("Produto cadastrado!");
+      const qtdLinhas = destino === "estoque"
+        ? Object.values(form.qtdPorTamanho || {}).filter((q) => Number(q) > 0).length || 1
+        : 1;
+      setUltimoSalvo({ nome: form.nome.trim(), destino, linhas: qtdLinhas });
+      showToast(qtdLinhas > 1 ? `${qtdLinhas} tamanhos cadastrados!` : "Produto cadastrado!");
 
       // Limpa a foto e o nome sempre; os demais campos ficam se "manter dados"
       // estiver marcado — ajuda a cadastrar vários itens parecidos em sequência.
       if (manterDados) {
-        setForm((f) => ({ ...f, nome: "", tamanho: "", estoque: "", imagens: [] }));
+        setForm((f) => ({ ...f, nome: "", tamanho: "", estoque: "", qtdPorTamanho: {}, imagens: [] }));
       } else {
         setForm(emptyForm);
       }
@@ -466,46 +557,18 @@ function CadastroProduto() {
         .cad-item-info { flex: 1; min-width: 0; }
         .cad-item-nome { font-weight: 600; font-size: 14.5px; line-height: 1.25; }
         .cad-item-meta { font-size: 11.5px; color: var(--ink-soft); margin-top: 2px; }
+        .cad-grade { display: grid; grid-template-columns: repeat(auto-fit, minmax(66px, 1fr)); gap: 8px; }
+        .cad-grade-item { border: 1px solid var(--line); border-radius: 9px; background: var(--panel2); padding: 7px 6px; text-align: center; }
+        .cad-grade-item.on { border-color: var(--rust); background: rgba(217,169,59,0.1); }
+        .cad-grade-item span { display: block; font-size: 12px; font-weight: 700; color: var(--ink-soft); font-family: 'IBM Plex Mono', monospace; margin-bottom: 4px; }
+        .cad-grade-item.on span { color: var(--rust); }
+        .cad-grade-item input { width: 100%; border: none; background: transparent; color: var(--ink); font-size: 16px; font-weight: 600; text-align: center; font-family: inherit; padding: 2px 0; }
+        .cad-grade-item input:focus { outline: none; }
+        .cad-dica { font-size: 11.5px; color: var(--ink-soft); margin-top: 8px; line-height: 1.35; }
+        .cad-aviso { background: rgba(217,169,59,0.12); border: 1px solid rgba(217,169,59,0.35); color: var(--rust); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; margin-bottom: 14px; }
         .cad-item-tag { font-size: 10.5px; font-weight: 600; color: var(--rust); border: 1px solid var(--rust); border-radius: 999px; padding: 2px 8px; white-space: nowrap; flex-shrink: 0; }
         .cad-vazio { text-align: center; padding: 40px 20px; color: var(--ink-soft); font-size: 14px; display: flex; align-items: center; justify-content: center; gap: 8px; }
         .cad-voltar { width: 100%; margin-top: 10px; padding: 13px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font-size: 14px; font-family: inherit; cursor: pointer; }
-        @media (min-width: 700px) and (pointer: coarse) {
-          .cad-root { padding: 3vw 4vw 14vw; }
-          .cad-wrap { max-width: 100%; }
-          .cad-header { gap: 3vw; margin-bottom: 4.5vw; }
-          .cad-header img { width: 11vw !important; height: 11vw !important; }
-          .cad-title { font-size: 5.6vw; }
-          .cad-sub { font-size: 3.2vw; }
-          .cad-destino { padding: 1vw; border-radius: 2.5vw; margin-bottom: 3.5vw; }
-          .cad-destino button { font-size: 3.6vw; padding: 3vw 1.5vw; border-radius: 1.8vw; }
-          .cad-card { padding: 4vw; border-radius: 3vw; margin-bottom: 3.5vw; }
-          .cad-field { margin-bottom: 3.5vw; }
-          .cad-field label { font-size: 3.2vw; margin-bottom: 1.3vw; }
-          .cad-field input, .cad-field select { font-size: 4.1vw; padding: 3vw 3.2vw; border-radius: 2.3vw; }
-          .cad-row2 { gap: 2.6vw; }
-          .cad-derived { font-size: 3.2vw; padding: 2.4vw 2.8vw; }
-          .cad-submit { font-size: 4.3vw; padding: 4vw; border-radius: 2.6vw; gap: 2vw; }
-          .cad-submit svg { width: 4.6vw; height: 4.6vw; }
-          .cad-check { font-size: 3.4vw; gap: 2vw; margin: 3vw 0; }
-          .cad-check input { width: 4.4vw; height: 4.4vw; }
-          .cad-ok { font-size: 3.5vw; padding: 3vw 3.4vw; }
-          .cad-links { gap: 2.6vw; margin-top: 4.5vw; }
-          .cad-links a { font-size: 3.5vw; padding: 3vw; border-radius: 2.3vw; }
-          .cad-gallery { gap: 2vw; }
-          .cad-thumb, .cad-add { width: 17.5vw; height: 17.5vw; border-radius: 2.1vw; }
-          .cad-add svg { width: 4.6vw; height: 4.6vw; }
-          .cad-add span { font-size: 2.5vw; }
-          .cad-thumb button { width: 4.6vw; height: 4.6vw; font-size: 3vw; }
-          .cad-lista { gap: 2vw; }
-          .cad-item { padding: 2.6vw; gap: 2.8vw; border-radius: 2.6vw; }
-          .cad-item-thumb { width: 13.5vw; height: 13.5vw; border-radius: 2.1vw; }
-          .cad-item-nome { font-size: 3.8vw; }
-          .cad-item-meta { font-size: 3vw; }
-          .cad-item-tag { font-size: 2.7vw; padding: 0.5vw 2vw; }
-          .cad-vazio { font-size: 3.6vw; padding: 10vw 5vw; }
-          .cad-voltar { font-size: 3.6vw; padding: 3.4vw; border-radius: 2.6vw; }
-          .cad-toast { font-size: 3.6vw; padding: 3vw 5vw; }
-        }
       `}</style>
 
       <div className="cad-wrap">
@@ -539,10 +602,15 @@ function CadastroProduto() {
               <>
                 <div className="cad-card">
                   <div style={{ fontWeight: 600, fontSize: 16, marginBottom: 2 }}>{selecionado.nome}</div>
-                  <div className="cad-sub" style={{ marginBottom: 14 }}>
-                    {[selecionado.tamanho, selecionado.versao, selecionado.temporada].filter(Boolean).join(" · ")}
+                  <div className="cad-sub" style={{ marginBottom: 10 }}>
+                    {[selecionado.versao, selecionado.temporada].filter(Boolean).join(" · ")}
                     {selecionado.origem === "encomenda" ? " · Sob encomenda" : ""}
                   </div>
+                  {selecionado.tamanhos.length > 0 && (
+                    <div className="cad-aviso">
+                      As fotos valem para {selecionado.tamanhos.length} tamanho(s): {selecionado.tamanhos.join(", ")}
+                    </div>
+                  )}
                   <div className="cad-field">
                     <label>Fotos</label>
                     <div className="cad-gallery">
@@ -597,9 +665,12 @@ function CadastroProduto() {
                         <div className="cad-item-info">
                           <div className="cad-item-nome">{it.nome || "(sem nome)"}</div>
                           <div className="cad-item-meta">
-                            {[it.tamanho, it.versao, it.temporada].filter(Boolean).join(" · ")}
+                            {[it.versao, it.temporada].filter(Boolean).join(" · ")}
                             {it.origem === "encomenda" ? " · Sob encomenda" : ""}
                           </div>
+                          {it.tamanhos.length > 0 && (
+                            <div className="cad-item-meta">{it.tamanhos.join(" · ")}</div>
+                          )}
                         </div>
                         <div className="cad-item-tag">{it.fotos.length > 0 ? `${it.fotos.length} foto(s)` : "sem foto"}</div>
                       </button>
@@ -649,15 +720,9 @@ function CadastroProduto() {
             </div>
 
             {destino === "estoque" && (
-              <div className="cad-row2">
-                <div className="cad-field">
-                  <label>Tamanho</label>
-                  <input value={form.tamanho} onChange={(e) => setForm((f) => ({ ...f, tamanho: e.target.value }))} placeholder="G, GG, M…" />
-                </div>
-                <div className="cad-field">
-                  <label>Categoria</label>
-                  <input value={form.categoria} onChange={(e) => setForm((f) => ({ ...f, categoria: e.target.value }))} placeholder="Futebol" />
-                </div>
+              <div className="cad-field">
+                <label>Categoria</label>
+                <input value={form.categoria} onChange={(e) => setForm((f) => ({ ...f, categoria: e.target.value }))} placeholder="Futebol" />
               </div>
             )}
 
@@ -716,18 +781,83 @@ function CadastroProduto() {
             )}
 
             {destino === "estoque" && (
-              <div className="cad-row2">
+              <>
                 <div className="cad-field">
-                  <label>Estoque atual</label>
-                  <input type="number" min="0" inputMode="numeric"
-                    value={form.estoque} onChange={(e) => setForm((f) => ({ ...f, estoque: e.target.value }))} />
+                  <label>Quantidade por tamanho — adulto</label>
+                  <div className="cad-grade">
+                    {TAMANHOS_ADULTO.map((t) => {
+                      const qtd = (form.qtdPorTamanho || {})[t] || "";
+                      return (
+                        <div className={`cad-grade-item ${qtd ? "on" : ""}`} key={t}>
+                          <span>{t}</span>
+                          <input
+                            type="number" min="0" inputMode="numeric" placeholder="0"
+                            value={qtd}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setForm((f) => {
+                                const mapa = { ...(f.qtdPorTamanho || {}) };
+                                if (v === "" || Number(v) === 0) delete mapa[t];
+                                else mapa[t] = v;
+                                return { ...f, qtdPorTamanho: mapa };
+                              });
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
+
                 <div className="cad-field">
-                  <label>Estoque mínimo</label>
+                  <label>Quantidade por tamanho — infantil</label>
+                  <div className="cad-grade">
+                    {TAMANHOS_INFANTIL.map((t) => {
+                      const qtd = (form.qtdPorTamanho || {})[t] || "";
+                      return (
+                        <div className={`cad-grade-item ${qtd ? "on" : ""}`} key={t}>
+                          <span>{t}</span>
+                          <input
+                            type="number" min="0" inputMode="numeric" placeholder="0"
+                            value={qtd}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setForm((f) => {
+                                const mapa = { ...(f.qtdPorTamanho || {}) };
+                                if (v === "" || Number(v) === 0) delete mapa[t];
+                                else mapa[t] = v;
+                                return { ...f, qtdPorTamanho: mapa };
+                              });
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="cad-dica">
+                    Preencha a quantidade nos tamanhos que você tem — adulto, infantil ou os dois.
+                    Cada tamanho preenchido vira uma linha na planilha.
+                  </div>
+                </div>
+
+                <div className="cad-row2">
+                  <div className="cad-field">
+                    <label>Outro tamanho</label>
+                    <input value={form.tamanho} onChange={(e) => setForm((f) => ({ ...f, tamanho: e.target.value }))} placeholder="Ex: 26, Único" />
+                  </div>
+                  <div className="cad-field">
+                    <label>Qtd. desse tamanho</label>
+                    <input type="number" min="0" inputMode="numeric"
+                      value={form.estoque} onChange={(e) => setForm((f) => ({ ...f, estoque: e.target.value }))} />
+                  </div>
+                </div>
+
+                <div className="cad-field">
+                  <label>Estoque mínimo (alerta)</label>
                   <input type="number" min="0" inputMode="numeric" placeholder="Alerta"
                     value={form.estoqueMinimo} onChange={(e) => setForm((f) => ({ ...f, estoqueMinimo: e.target.value }))} />
                 </div>
-              </div>
+              </>
             )}
           </div>
 
