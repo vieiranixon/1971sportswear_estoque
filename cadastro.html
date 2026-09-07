@@ -137,7 +137,66 @@ function encomendaToSheetRow(p, headers) {
 
 // 1400px com qualidade 0.88 dá foto nítida no celular e no zoom do catálogo,
 // sem estourar o tamanho do arquivo enviado ao Drive.
-function resizeImage(file, maxWidth = 1400, quality = 0.88) {
+// Remove fundo uniforme: parte das bordas e vai "inundando" os pixels
+// parecidos. Como só alcança o que está conectado à borda, o branco de
+// dentro da camisa (listras, números) nunca é apagado.
+function limparFundo(dados, larg, alt, tolerancia = 42) {
+  const px = dados;
+  const total = larg * alt;
+
+  // cor do fundo = média das quatro bordas
+  let r = 0, g = 0, b = 0, n = 0;
+  const amostra = (x, y) => { const i = (y * larg + x) * 4; r += px[i]; g += px[i+1]; b += px[i+2]; n++; };
+  for (let x = 0; x < larg; x += 2) { amostra(x, 0); amostra(x, alt - 1); }
+  for (let y = 0; y < alt; y += 2) { amostra(0, y); amostra(larg - 1, y); }
+  r /= n; g /= n; b /= n;
+
+  // fundo escuro provavelmente é foto de ambiente: não mexe
+  if (r + g + b < 330) return { alterou: false, limpos: 0 };
+
+  const visitado = new Uint8Array(total);
+  const fila = new Int32Array(total);
+  let ini = 0, fim = 0;
+
+  const perto = (i) => {
+    const d = Math.abs(px[i*4] - r) + Math.abs(px[i*4+1] - g) + Math.abs(px[i*4+2] - b);
+    return d < tolerancia * 3;
+  };
+
+  for (let x = 0; x < larg; x++) {
+    for (const y of [0, alt - 1]) {
+      const i = y * larg + x;
+      if (!visitado[i] && perto(i)) { visitado[i] = 1; fila[fim++] = i; }
+    }
+  }
+  for (let y = 0; y < alt; y++) {
+    for (const x of [0, larg - 1]) {
+      const i = y * larg + x;
+      if (!visitado[i] && perto(i)) { visitado[i] = 1; fila[fim++] = i; }
+    }
+  }
+
+  while (ini < fim) {
+    const i = fila[ini++];
+    const x = i % larg, y = (i / larg) | 0;
+    const viz = [];
+    if (x > 0) viz.push(i - 1);
+    if (x < larg - 1) viz.push(i + 1);
+    if (y > 0) viz.push(i - larg);
+    if (y < alt - 1) viz.push(i + larg);
+    for (const j of viz) if (!visitado[j] && perto(j)) { visitado[j] = 1; fila[fim++] = j; }
+  }
+
+  // se quase tudo entrou, é foto de fundo liso inteiro: cancela
+  if (fim > total * 0.92) return { alterou: false, limpos: 0 };
+
+  for (let i = 0; i < total; i++) {
+    if (visitado[i]) { px[i*4] = 255; px[i*4+1] = 255; px[i*4+2] = 255; }
+  }
+  return { alterou: fim > total * 0.02, limpos: fim };
+}
+
+function resizeImage(file, maxWidth = 1400, quality = 0.88, tirarFundo = false) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -155,6 +214,17 @@ function resizeImage(file, maxWidth = 1400, quality = 0.88) {
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+        if (tirarFundo) {
+          try {
+            const dados = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            limparFundo(dados.data, canvas.width, canvas.height);
+            ctx.putImageData(dados, 0, 0);
+          } catch (e) {
+            // se falhar, segue com a foto original
+          }
+        }
+
         resolve(canvas.toDataURL("image/jpeg", quality));
       };
       img.onerror = reject;
@@ -192,6 +262,58 @@ function chaveModelo(campos) {
   return normKey(campos.join("|"));
 }
 
+// Galeria com reordenação. As setas movem a foto uma posição para cada lado,
+// sem precisar apagar e reenviar. A primeira da lista é a capa: é ela que
+// aparece no card do catálogo.
+function Galeria({ fotos, onChange, onAdd, uploading, progresso, rotulo = "Fotos", tirarFundo, setTirarFundo }) {
+  function mover(i, direcao) {
+    const j = i + direcao;
+    if (j < 0 || j >= fotos.length) return;
+    const nova = fotos.slice();
+    [nova[i], nova[j]] = [nova[j], nova[i]];
+    onChange(nova);
+  }
+
+  function remover(i) {
+    onChange(fotos.filter((_, idx) => idx !== i));
+  }
+
+  return (
+    <div className="cad-gallery">
+      {fotos.map((url, i) => (
+        <div className={`cad-thumb ${i === 0 ? "capa" : ""}`} key={url + i}>
+          <img src={url} alt="" />
+          {i === 0 && <span className="cad-capa">CAPA</span>}
+          <button type="button" className="cad-thumb-x" onClick={() => remover(i)} aria-label="Remover">×</button>
+          <div className="cad-thumb-nav">
+            <button type="button" disabled={i === 0} onClick={() => mover(i, -1)} aria-label="Mover para trás">‹</button>
+            <button type="button" disabled={i === fotos.length - 1} onClick={() => mover(i, 1)} aria-label="Mover para frente">›</button>
+          </div>
+        </div>
+      ))}
+      <div className="cad-add" onClick={() => !uploading && onAdd()}>
+        {uploading ? <Loader2 className="spin" size={18} /> : <ImagePlus size={18} />}
+        <span>{uploading ? (progresso ? `${progresso.atual}/${progresso.total}` : "Enviando…") : rotulo}</span>
+      </div>
+    </div>
+  );
+}
+
+// Interruptor da limpeza de fundo. Fica desligado por padrão: só funciona bem
+// com fundo claro e uniforme, então quem decide é você, foto a foto.
+function OpcaoFundo({ ligado, aoMudar }) {
+  return (
+    <label className="cad-switch">
+      <input type="checkbox" checked={ligado} onChange={(e) => aoMudar(e.target.checked)} />
+      <span className="cad-switch-bola" />
+      <span className="cad-switch-txt">
+        Deixar o fundo branco
+        <small>Funciona com fundo claro e liso. A foto sai limpa como as de catálogo.</small>
+      </span>
+    </label>
+  );
+}
+
 const emptyForm = {
   nome: "", tamanho: "", qtdPorTamanho: {}, categoria: "", versao: "", campeonato: "", genero: "",
   temporada: "", custo: "", preco: "", estoque: "", estoqueMinimo: "", imagens: [],
@@ -202,6 +324,7 @@ function CadastroProduto() {
   const [form, setForm] = useState(emptyForm);
   const [salvando, setSalvando] = useState(false);
   const [uploadingImg, setUploadingImg] = useState(false);
+  const [tirarFundo, setTirarFundo] = useState(false);
   const [progresso, setProgresso] = useState(null); // { atual, total }
   const [toast, setToast] = useState(null);
   const [ultimoSalvo, setUltimoSalvo] = useState(null);
@@ -263,7 +386,7 @@ function CadastroProduto() {
     for (let i = 0; i < arquivos.length; i++) {
       setProgresso({ atual: i + 1, total: arquivos.length });
       try {
-        const dataUrl = await resizeImage(arquivos[i]);
+        const dataUrl = await resizeImage(arquivos[i], 1400, 0.88, tirarFundo);
         const res = await gasPost({ action: "uploadImage", base64: dataUrl, mimeType: "image/jpeg", filename: uid() + ".jpg" });
         if (res && res.ok && res.url) {
           aoConcluirCada(res.url);
@@ -537,9 +660,16 @@ function CadastroProduto() {
         .cad-field input:focus, .cad-field select:focus { outline: none; border-color: var(--rust); }
         .cad-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
         .cad-gallery { display: flex; flex-wrap: wrap; gap: 8px; }
-        .cad-thumb { position: relative; width: 68px; height: 68px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); }
+        .cad-thumb { position: relative; width: 84px; height: 84px; border-radius: 9px; overflow: hidden; border: 1px solid var(--line); background: #fff; }
+        .cad-thumb.capa { border-color: var(--rust); }
         .cad-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-        .cad-thumb button { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; border-radius: 50%; border: none; background: rgba(14,12,9,0.8); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; font-size: 12px; line-height: 1; }
+        .cad-capa { position: absolute; top: 3px; left: 3px; background: var(--rust); color: #17130B; font-size: 8.5px; font-weight: 700; letter-spacing: .4px; padding: 2px 5px; border-radius: 4px; }
+        .cad-thumb-x { position: absolute; top: 3px; right: 3px; width: 19px; height: 19px; border-radius: 50%; border: none; background: rgba(14,12,9,0.85); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; font-size: 13px; line-height: 1; }
+        /* setas de reordenação: mover a foto sem precisar apagar */
+        .cad-thumb-nav { position: absolute; left: 0; right: 0; bottom: 0; display: flex; background: rgba(14,12,9,0.82); }
+        .cad-thumb-nav button { flex: 1; border: none; background: transparent; color: var(--ink); font-size: 17px; line-height: 1; padding: 4px 0; cursor: pointer; font-family: inherit; }
+        .cad-thumb-nav button:disabled { color: #5C5340; cursor: default; }
+        .cad-thumb-nav button:active:not(:disabled) { background: rgba(217,169,59,0.3); }
         .cad-add { width: 68px; height: 68px; border-radius: 8px; border: 1px dashed var(--line); background: var(--panel2); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; cursor: pointer; color: var(--ink-soft); }
         .cad-add span { font-size: 9.5px; }
         .cad-derived { font-size: 12.5px; color: var(--ink-soft); background: var(--panel2); padding: 9px 11px; border-radius: 8px; margin-bottom: 14px; }
@@ -572,6 +702,14 @@ function CadastroProduto() {
         .cad-grade-item.on span { color: var(--rust); }
         .cad-grade-item input { width: 100%; border: none; background: transparent; color: var(--ink); font-size: 16px; font-weight: 600; text-align: center; font-family: inherit; padding: 2px 0; }
         .cad-grade-item input:focus { outline: none; }
+        .cad-switch { display: flex; align-items: flex-start; gap: 10px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; margin-bottom: 10px; cursor: pointer; }
+        .cad-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+        .cad-switch-bola { position: relative; flex-shrink: 0; width: 38px; height: 22px; border-radius: 999px; background: #3A311E; transition: background .15s; margin-top: 1px; }
+        .cad-switch-bola::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--ink-soft); transition: transform .15s, background .15s; }
+        .cad-switch input:checked + .cad-switch-bola { background: var(--rust); }
+        .cad-switch input:checked + .cad-switch-bola::after { transform: translateX(16px); background: #17130B; }
+        .cad-switch-txt { font-size: 13.5px; font-weight: 500; display: flex; flex-direction: column; gap: 3px; }
+        .cad-switch-txt small { font-size: 11.5px; color: var(--ink-soft); font-weight: 400; line-height: 1.35; }
         .cad-dica { font-size: 11.5px; color: var(--ink-soft); margin-top: 8px; line-height: 1.35; }
         .cad-aviso { background: rgba(217,169,59,0.12); border: 1px solid rgba(217,169,59,0.35); color: var(--rust); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; margin-bottom: 14px; }
         .cad-item-tag { font-size: 10.5px; font-weight: 600; color: var(--rust); border: 1px solid var(--rust); border-radius: 999px; padding: 2px 8px; white-space: nowrap; flex-shrink: 0; }
@@ -621,17 +759,15 @@ function CadastroProduto() {
                   )}
                   <div className="cad-field">
                     <label>Fotos</label>
-                    <div className="cad-gallery">
-                      {fotosSelecionado.map((url, i) => (
-                        <div className="cad-thumb" key={i}>
-                          <img src={url} alt="" />
-                          <button type="button" onClick={() => setFotosSelecionado((p) => p.filter((_, idx) => idx !== i))}>×</button>
-                        </div>
-                      ))}
-                      <div className="cad-add" onClick={() => !uploadingImg && fotoExistenteRef.current?.click()}>
-                        {uploadingImg ? <Loader2 className="spin" size={18} /> : <ImagePlus size={18} />}
-                        <span>{uploadingImg ? (progresso ? `${progresso.atual}/${progresso.total}` : "Enviando…") : "Fotos"}</span>
-                      </div>
+                    <OpcaoFundo ligado={tirarFundo} aoMudar={setTirarFundo} />
+                    <Galeria
+                      fotos={fotosSelecionado}
+                      onChange={setFotosSelecionado}
+                      onAdd={() => fotoExistenteRef.current?.click()}
+                      uploading={uploadingImg}
+                      progresso={progresso}
+                    />
+                    <div style={{ display: "none" }}>
                     </div>
                     <input ref={fotoExistenteRef} type="file" accept="image/*" multiple hidden
                       onChange={(e) => { handleAddImageExistente(e.target.files); e.target.value = ""; }} />
@@ -703,17 +839,16 @@ function CadastroProduto() {
           <div className="cad-card">
             <div className="cad-field">
               <label>Fotos do produto</label>
-              <div className="cad-gallery">
-                {(form.imagens || []).map((url, i) => (
-                  <div className="cad-thumb" key={i}>
-                    <img src={url} alt="" />
-                    <button type="button" onClick={() => removeImageAt(i)}>×</button>
-                  </div>
-                ))}
-                <div className="cad-add" onClick={() => !uploadingImg && fileRef.current?.click()}>
-                  {uploadingImg ? <Loader2 className="spin" size={18} /> : <ImagePlus size={18} />}
-                  <span>{uploadingImg ? (progresso ? `${progresso.atual}/${progresso.total}` : "Enviando…") : "Fotos"}</span>
-                </div>
+              <div className="cad-dica" style={{ marginTop: 0, marginBottom: 8 }}>Use ‹ › para mudar a ordem. A primeira é a capa no catálogo.</div>
+              <OpcaoFundo ligado={tirarFundo} aoMudar={setTirarFundo} />
+              <Galeria
+                fotos={form.imagens || []}
+                onChange={(nova) => setForm((f) => ({ ...f, imagens: nova }))}
+                onAdd={() => fileRef.current?.click()}
+                uploading={uploadingImg}
+                progresso={progresso}
+              />
+              <div style={{ display: "none" }}>
               </div>
               <input ref={fileRef} type="file" accept="image/*" multiple hidden
                 onChange={(e) => { handleAddImage(e.target.files); e.target.value = ""; }} />

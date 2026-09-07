@@ -68,7 +68,114 @@ const uid = () =>
   (crypto?.randomUUID && crypto.randomUUID()) ||
   `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-function resizeImage(file, maxWidth = 680, quality = 0.72) {
+// Galeria com reordenação: as setas movem a foto uma posição para cada lado,
+// sem precisar apagar e reenviar. A primeira é a capa do catálogo.
+// Interruptor da limpeza de fundo. Desligado por padrão: só funciona bem com
+// fundo claro e uniforme, então quem decide é você, foto a foto.
+function OpcaoFundoEst({ ligado, aoMudar }) {
+  return (
+    <label className="est-switch">
+      <input type="checkbox" checked={ligado} onChange={(e) => aoMudar(e.target.checked)} />
+      <span className="est-switch-bola" />
+      <span className="est-switch-txt">
+        Deixar o fundo branco
+        <small>Funciona com fundo claro e liso.</small>
+      </span>
+    </label>
+  );
+}
+
+function GaleriaEst({ fotos, onChange, onAdd, uploading, progresso }) {
+  function mover(i, direcao) {
+    const j = i + direcao;
+    if (j < 0 || j >= fotos.length) return;
+    const nova = fotos.slice();
+    [nova[i], nova[j]] = [nova[j], nova[i]];
+    onChange(nova);
+  }
+  return (
+    <div className="est-gallery">
+      {fotos.map((url, i) => (
+        <div className={`est-gallery-thumb ${i === 0 ? "capa" : ""}`} key={url + i}>
+          <img src={url} alt="" />
+          {i === 0 && <span className="est-capa">CAPA</span>}
+          <button type="button" className="est-gallery-remove" onClick={() => onChange(fotos.filter((_, idx) => idx !== i))}>
+            <X size={11} />
+          </button>
+          <div className="est-thumb-nav">
+            <button type="button" disabled={i === 0} onClick={() => mover(i, -1)}>‹</button>
+            <button type="button" disabled={i === fotos.length - 1} onClick={() => mover(i, 1)}>›</button>
+          </div>
+        </div>
+      ))}
+      <div className="est-gallery-add" onClick={() => !uploading && onAdd()}>
+        {uploading ? <Loader2 className="spin" size={18} /> : <ImagePlus size={18} />}
+        <span>{uploading ? (progresso ? `${progresso.atual}/${progresso.total}` : "Enviando…") : "Adicionar"}</span>
+      </div>
+    </div>
+  );
+}
+
+// Remove fundo uniforme: parte das bordas e vai "inundando" os pixels
+// parecidos. Como só alcança o que está conectado à borda, o branco de
+// dentro da camisa (listras, números) nunca é apagado.
+function limparFundo(dados, larg, alt, tolerancia = 42) {
+  const px = dados;
+  const total = larg * alt;
+
+  // cor do fundo = média das quatro bordas
+  let r = 0, g = 0, b = 0, n = 0;
+  const amostra = (x, y) => { const i = (y * larg + x) * 4; r += px[i]; g += px[i+1]; b += px[i+2]; n++; };
+  for (let x = 0; x < larg; x += 2) { amostra(x, 0); amostra(x, alt - 1); }
+  for (let y = 0; y < alt; y += 2) { amostra(0, y); amostra(larg - 1, y); }
+  r /= n; g /= n; b /= n;
+
+  // fundo escuro provavelmente é foto de ambiente: não mexe
+  if (r + g + b < 330) return { alterou: false, limpos: 0 };
+
+  const visitado = new Uint8Array(total);
+  const fila = new Int32Array(total);
+  let ini = 0, fim = 0;
+
+  const perto = (i) => {
+    const d = Math.abs(px[i*4] - r) + Math.abs(px[i*4+1] - g) + Math.abs(px[i*4+2] - b);
+    return d < tolerancia * 3;
+  };
+
+  for (let x = 0; x < larg; x++) {
+    for (const y of [0, alt - 1]) {
+      const i = y * larg + x;
+      if (!visitado[i] && perto(i)) { visitado[i] = 1; fila[fim++] = i; }
+    }
+  }
+  for (let y = 0; y < alt; y++) {
+    for (const x of [0, larg - 1]) {
+      const i = y * larg + x;
+      if (!visitado[i] && perto(i)) { visitado[i] = 1; fila[fim++] = i; }
+    }
+  }
+
+  while (ini < fim) {
+    const i = fila[ini++];
+    const x = i % larg, y = (i / larg) | 0;
+    const viz = [];
+    if (x > 0) viz.push(i - 1);
+    if (x < larg - 1) viz.push(i + 1);
+    if (y > 0) viz.push(i - larg);
+    if (y < alt - 1) viz.push(i + larg);
+    for (const j of viz) if (!visitado[j] && perto(j)) { visitado[j] = 1; fila[fim++] = j; }
+  }
+
+  // se quase tudo entrou, é foto de fundo liso inteiro: cancela
+  if (fim > total * 0.92) return { alterou: false, limpos: 0 };
+
+  for (let i = 0; i < total; i++) {
+    if (visitado[i]) { px[i*4] = 255; px[i*4+1] = 255; px[i*4+2] = 255; }
+  }
+  return { alterou: fim > total * 0.02, limpos: fim };
+}
+
+function resizeImage(file, maxWidth = 1400, quality = 0.88, tirarFundo = false) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -79,7 +186,23 @@ function resizeImage(file, maxWidth = 680, quality = 0.72) {
         canvas.width = Math.round(img.width * scale);
         canvas.height = Math.round(img.height * scale);
         const ctx = canvas.getContext("2d");
+        // JPEG não guarda transparência: pintamos branco antes de desenhar
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+        if (tirarFundo) {
+          try {
+            const dados = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            limparFundo(dados.data, canvas.width, canvas.height);
+            ctx.putImageData(dados, 0, 0);
+          } catch (e) {
+            // se falhar, segue com a foto original
+          }
+        }
+
         resolve(canvas.toDataURL("image/jpeg", quality));
       };
       img.onerror = reject;
@@ -281,6 +404,8 @@ function ControleEstoque() {
   const headersRef = useRef(FALLBACK_HEADERS);
   const encHeadersRef = useRef(ENCOMENDA_FALLBACK_HEADERS);
   const [uploadingImg, setUploadingImg] = useState(false);
+  const [progresso, setProgresso] = useState(null);
+  const [tirarFundo, setTirarFundo] = useState(false);
   const [gerandoImagem, setGerandoImagem] = useState(false);
   const catalogRef = useRef(null);
 
@@ -364,26 +489,33 @@ function ControleEstoque() {
     setForm(emptyProduct);
   }
 
-  async function handleAddImage(file) {
-    if (!file) return;
+  // Envia as fotos uma a uma, mostrando o progresso (1/5, 2/5…). Sequencial
+  // de propósito: o Apps Script não aguenta várias ao mesmo tempo.
+  async function enviarFotos(fileList, aoConcluir) {
+    const arquivos = Array.from(fileList || []).filter((f) => f && f.type.startsWith("image/"));
+    if (!arquivos.length) return;
     setUploadingImg(true);
-    try {
-      const dataUrl = await resizeImage(file);
-      const res = await gasPost({ action: "uploadImage", base64: dataUrl, mimeType: "image/jpeg", filename: uid() + ".jpg" });
-      if (res && res.ok && res.url) {
-        setForm((f) => ({ ...f, imagens: [...(f.imagens || []), res.url] }));
-      } else {
-        showToast("Não consegui salvar a imagem no Drive", "erro");
+    let falhas = 0;
+    for (let i = 0; i < arquivos.length; i++) {
+      setProgresso({ atual: i + 1, total: arquivos.length });
+      try {
+        const dataUrl = await resizeImage(arquivos[i], 1400, 0.88, tirarFundo);
+        const res = await gasPost({ action: "uploadImage", base64: dataUrl, mimeType: "image/jpeg", filename: uid() + ".jpg" });
+        if (res && res.ok && res.url) aoConcluir(res.url);
+        else falhas++;
+      } catch (e) {
+        falhas++;
       }
-    } catch (e) {
-      showToast("Não foi possível enviar a imagem", "erro");
     }
+    setProgresso(null);
     setUploadingImg(false);
+    if (falhas) showToast(`${falhas} de ${arquivos.length} foto(s) não foram enviadas`, "erro");
   }
 
-  function removeImageAt(index) {
-    setForm((f) => ({ ...f, imagens: (f.imagens || []).filter((_, i) => i !== index) }));
+  function handleAddImage(fileList) {
+    return enviarFotos(fileList, (url) => setForm((f) => ({ ...f, imagens: [...(f.imagens || []), url] })));
   }
+
 
   async function saveProduct(e) {
     e.preventDefault();
@@ -456,26 +588,10 @@ function ControleEstoque() {
     setEncForm(emptyEncomenda);
   }
 
-  async function handleAddImageEnc(file) {
-    if (!file) return;
-    setUploadingImg(true);
-    try {
-      const dataUrl = await resizeImage(file);
-      const res = await gasPost({ action: "uploadImage", base64: dataUrl, mimeType: "image/jpeg", filename: uid() + ".jpg" });
-      if (res && res.ok && res.url) {
-        setEncForm((f) => ({ ...f, imagens: [...(f.imagens || []), res.url] }));
-      } else {
-        showToast("Não consegui salvar a imagem no Drive", "erro");
-      }
-    } catch (e) {
-      showToast("Não foi possível enviar a imagem", "erro");
-    }
-    setUploadingImg(false);
+  function handleAddImageEnc(fileList) {
+    return enviarFotos(fileList, (url) => setEncForm((f) => ({ ...f, imagens: [...(f.imagens || []), url] })));
   }
 
-  function removeImageAtEnc(index) {
-    setEncForm((f) => ({ ...f, imagens: (f.imagens || []).filter((_, i) => i !== index) }));
-  }
 
   async function saveEncomenda(e) {
     e.preventDefault();
@@ -826,7 +942,7 @@ function ControleEstoque() {
         .est-search { flex: 1; min-width: 180px; position: relative; }
         .est-search input {
           width: 100%; padding: 9px 12px 9px 34px; border-radius: 9px; border: 1px solid var(--line);
-          background: var(--panel); font-size: 16px; font-family: inherit; color: var(--ink);
+          background: var(--panel); font-size: 14px; font-family: inherit; color: var(--ink);
         }
         .est-search svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--ink-soft); }
         .est-btn {
@@ -870,7 +986,7 @@ function ControleEstoque() {
         .est-field { margin-bottom: 12px; }
         .est-field label { display: block; font-size: 12.5px; font-weight: 500; color: var(--ink-soft); margin-bottom: 4px; }
         .est-field input, .est-field select, .est-field textarea {
-          width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line); font-size: 16px; font-family: inherit; background: var(--panel); color: var(--ink);
+          width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line); font-size: 14px; font-family: inherit; background: var(--panel); color: var(--ink);
         }
         .est-field input:focus, .est-field select:focus { outline: none; border-color: var(--rust); }
         .est-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -879,10 +995,25 @@ function ControleEstoque() {
         }
         .est-imgpicker img { width: 46px; height: 46px; object-fit: cover; border-radius: 6px; }
         .est-gallery { display: flex; flex-wrap: wrap; gap: 8px; }
-        .est-gallery-thumb { position: relative; width: 60px; height: 60px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); }
+        .est-gallery-thumb { position: relative; width: 78px; height: 78px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); background: #fff; }
+        .est-gallery-thumb.capa { border-color: var(--rust); }
         .est-gallery-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-        .est-gallery-remove { position: absolute; top: 2px; right: 2px; width: 16px; height: 16px; border-radius: 50%; border: none; background: rgba(14,12,9,0.75); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
-        .est-gallery-add { width: 60px; height: 60px; border-radius: 8px; border: 1px dashed var(--line); background: var(--paper); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; cursor: pointer; color: var(--ink-soft); }
+        .est-capa { position: absolute; top: 3px; left: 3px; background: var(--rust); color: #17130B; font-size: 8px; font-weight: 700; letter-spacing: .4px; padding: 2px 4px; border-radius: 4px; }
+        .est-gallery-remove { position: absolute; top: 3px; right: 3px; width: 17px; height: 17px; border-radius: 50%; border: none; background: rgba(14,12,9,0.82); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+        .est-thumb-nav { position: absolute; left: 0; right: 0; bottom: 0; display: flex; background: rgba(14,12,9,0.82); }
+        .est-thumb-nav button { flex: 1; border: none; background: transparent; color: var(--ink); font-size: 16px; line-height: 1; padding: 3px 0; cursor: pointer; font-family: inherit; }
+        .est-thumb-nav button:disabled { color: #5C5340; cursor: default; }
+        .est-thumb-nav button:active:not(:disabled) { background: rgba(217,169,59,0.3); }
+        .est-switch { display: flex; align-items: flex-start; gap: 10px; background: var(--paper); border: 1px solid var(--line); border-radius: 9px; padding: 10px 11px; margin-bottom: 10px; cursor: pointer; }
+        .est-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+        .est-switch-bola { position: relative; flex-shrink: 0; width: 36px; height: 21px; border-radius: 999px; background: #3A311E; transition: background .15s; margin-top: 1px; }
+        .est-switch-bola::after { content: ""; position: absolute; top: 3px; left: 3px; width: 15px; height: 15px; border-radius: 50%; background: var(--ink-soft); transition: transform .15s, background .15s; }
+        .est-switch input:checked + .est-switch-bola { background: var(--rust); }
+        .est-switch input:checked + .est-switch-bola::after { transform: translateX(15px); background: #17130B; }
+        .est-switch-txt { font-size: 13px; font-weight: 500; display: flex; flex-direction: column; gap: 2px; }
+        .est-switch-txt small { font-size: 11px; color: var(--ink-soft); font-weight: 400; }
+        .est-dica { font-size: 11.5px; color: var(--ink-soft); margin-bottom: 8px; }
+        .est-gallery-add { width: 78px; height: 78px; border-radius: 8px; border: 1px dashed var(--line); background: var(--paper); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; cursor: pointer; color: var(--ink-soft); }
         .est-gallery-add span { font-size: 9.5px; text-align: center; line-height: 1.1; }
         .est-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
         .est-derived { font-size: 12.5px; color: var(--ink-soft); background: var(--paper); padding: 8px 10px; border-radius: 8px; margin-top: -2px; margin-bottom: 12px; }
@@ -944,9 +1075,6 @@ function ControleEstoque() {
       )}
 
       <div className="est-backup-bar">
-        <a className="est-btn est-btn-ghost" href="/cadastro.html" style={{ textDecoration: "none" }}>
-          <Plus size={13} /> Cadastro rápido
-        </a>
         <button className="est-btn est-btn-ghost" onClick={() => carregarDados(true)}>
           <RefreshCw size={13} className={syncing ? "spin" : ""} /> Atualizar da planilha
         </button>
@@ -1187,19 +1315,16 @@ function ControleEstoque() {
             <form onSubmit={saveProduct}>
               <div className="est-field">
                 <label>Fotos do produto</label>
-                <div className="est-gallery">
-                  {(form.imagens || []).map((url, i) => (
-                    <div className="est-gallery-thumb" key={i}>
-                      <img src={url} alt="" />
-                      <button type="button" className="est-gallery-remove" onClick={() => removeImageAt(i)}><X size={11} /></button>
-                    </div>
-                  ))}
-                  <div className="est-gallery-add" onClick={() => !uploadingImg && fileRef.current?.click()}>
-                    {uploadingImg ? <Loader2 className="spin" size={18} /> : <ImagePlus size={18} />}
-                    <span>{uploadingImg ? "Enviando…" : "Adicionar"}</span>
-                  </div>
-                </div>
-                <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => { handleAddImage(e.target.files?.[0]); e.target.value = ""; }} />
+                <div className="est-dica">Use ‹ › para mudar a ordem. A primeira é a capa no catálogo.</div>
+                <OpcaoFundoEst ligado={tirarFundo} aoMudar={setTirarFundo} />
+                <GaleriaEst
+                  fotos={form.imagens || []}
+                  onChange={(nova) => setForm((f) => ({ ...f, imagens: nova }))}
+                  onAdd={() => fileRef.current?.click()}
+                  uploading={uploadingImg}
+                  progresso={progresso}
+                />
+                <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { handleAddImage(e.target.files); e.target.value = ""; }} />
               </div>
               <div className="est-field">
                 <label>Nome do produto</label>
@@ -1300,19 +1425,16 @@ function ControleEstoque() {
             <form onSubmit={saveEncomenda}>
               <div className="est-field">
                 <label>Fotos do produto</label>
-                <div className="est-gallery">
-                  {(encForm.imagens || []).map((url, i) => (
-                    <div className="est-gallery-thumb" key={i}>
-                      <img src={url} alt="" />
-                      <button type="button" className="est-gallery-remove" onClick={() => removeImageAtEnc(i)}><X size={11} /></button>
-                    </div>
-                  ))}
-                  <div className="est-gallery-add" onClick={() => !uploadingImg && encFileRef.current?.click()}>
-                    {uploadingImg ? <Loader2 className="spin" size={18} /> : <ImagePlus size={18} />}
-                    <span>{uploadingImg ? "Enviando…" : "Adicionar"}</span>
-                  </div>
-                </div>
-                <input ref={encFileRef} type="file" accept="image/*" hidden onChange={(e) => { handleAddImageEnc(e.target.files?.[0]); e.target.value = ""; }} />
+                <div className="est-dica">Use ‹ › para mudar a ordem. A primeira é a capa no catálogo.</div>
+                <OpcaoFundoEst ligado={tirarFundo} aoMudar={setTirarFundo} />
+                <GaleriaEst
+                  fotos={encForm.imagens || []}
+                  onChange={(nova) => setEncForm((f) => ({ ...f, imagens: nova }))}
+                  onAdd={() => encFileRef.current?.click()}
+                  uploading={uploadingImg}
+                  progresso={progresso}
+                />
+                <input ref={encFileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { handleAddImageEnc(e.target.files); e.target.value = ""; }} />
               </div>
               <div className="est-field">
                 <label>Nome do produto</label>
