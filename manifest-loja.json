@@ -1,0 +1,16 @@
+{
+  "id": "/loja.html",
+  "name": "1971 Sportswear",
+  "short_name": "1971",
+  "start_url": "/loja.html",
+  "scope": "/loja.html",
+  "display": "standalone",
+  "background_color": "#0E0C09",
+  "theme_color": "#0E0C09",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-192-maskable.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
