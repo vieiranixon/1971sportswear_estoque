@@ -135,13 +135,16 @@ function agruparPorTamanho(lista) {
   const mapa = new Map();
   lista.forEach((p) => {
     const k = chaveGrupo(p);
-    if (!mapa.has(k)) mapa.set(k, { id: k, base: p, variantes: [] });
+    if (!mapa.has(k)) mapa.set(k, { id: k, base: p, sobEncomenda: !!p.sobEncomenda, variantes: [] });
     mapa.get(k).variantes.push(p);
   });
-  return Array.from(mapa.values()).map((g) => ({
-    ...g,
-    variantes: g.variantes.slice().sort((a, b) => posicaoTamanho(a.tamanho) - posicaoTamanho(b.tamanho)),
-  }));
+  return Array.from(mapa.values())
+    .map((g) => ({
+      ...g,
+      variantes: g.variantes.slice().sort((a, b) => posicaoTamanho(a.tamanho) - posicaoTamanho(b.tamanho)),
+    }))
+    // um modelo só aparece se ainda houver ao menos um tamanho em estoque
+    .filter((g) => g.sobEncomenda || g.variantes.some((v) => Number(v.estoque) > 0));
 }
 
 // Abas de categoria. Cada uma casa com o conteúdo da coluna "Categoria"
@@ -190,7 +193,7 @@ function CatalogoPublico() {
   }, []);
 
   const produtosDisponiveis = useMemo(
-    () => products.filter((p) => Number(p.estoque) > 0).map((p) => ({ ...p, sobEncomenda: false })),
+    () => products.map((p) => ({ ...p, sobEncomenda: false })),
     [products]
   );
   const itensSobEncomenda = useMemo(
@@ -214,12 +217,19 @@ function CatalogoPublico() {
   }, [disponiveis, search, categoria]);
 
   const grupos = useMemo(() => agruparPorTamanho(filtrados), [filtrados]);
+  // Base agrupada só para os contadores das abas: conta modelos (cards),
+  // não linhas da planilha, e já ignora o que está totalmente esgotado.
+  const gruposBase = useMemo(() => agruparPorTamanho(disponiveis), [disponiveis]);
 
   // Tamanho escolhido em cada card (por id de grupo)
   const [escolhas, setEscolhas] = useState({});
   function varianteDe(grupo) {
     const escolhido = escolhas[grupo.id];
-    return grupo.variantes.find((v) => v.id === escolhido) || grupo.variantes[0];
+    return (
+      grupo.variantes.find((v) => v.id === escolhido) ||
+      grupo.variantes.find((v) => Number(v.estoque) > 0) ||
+      grupo.variantes[0]
+    );
   }
 
   function metaLineCatalogo(p) {
@@ -281,8 +291,8 @@ function CatalogoPublico() {
         .cat-search svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--ink-soft); }
         .cat-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(200px,1fr)); gap: 14px; }
         .cat-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
-        .cat-card-img { aspect-ratio: 4/3; background: var(--paper); display: flex; align-items: center; justify-content: center; color: var(--ink-soft); overflow: hidden; position: relative; }
-        .cat-card-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .cat-card-img { aspect-ratio: 4/3; background: #FFFFFF; display: flex; align-items: center; justify-content: center; color: var(--ink-soft); overflow: hidden; position: relative; }
+        .cat-card-img img { width: 100%; height: 100%; object-fit: contain; display: block; }
         .cat-photo-count { position: absolute; bottom: 6px; right: 6px; background: rgba(14,12,9,0.75); color: var(--ink); font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 999px; font-family: 'IBM Plex Mono', monospace; }
         .cat-card-body { padding: 12px 13px 13px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
         .cat-card-name { font-weight: 600; font-size: 14.5px; line-height: 1.25; }
@@ -321,6 +331,7 @@ function CatalogoPublico() {
           font-family: 'IBM Plex Mono', monospace; cursor: pointer;
         }
         .cat-tamanhos button.on { background: var(--rust); border-color: var(--rust); color: #17130B; }
+        .cat-tamanhos button.off { opacity: 0.32; background: transparent; border-style: dashed; text-decoration: line-through; cursor: not-allowed; }
         .cat-card-img.clicavel { cursor: pointer; }
         .cat-photo-count { display: flex; align-items: center; gap: 3px; }
         .cat-lb {
@@ -383,8 +394,8 @@ function CatalogoPublico() {
             <div className="cat-cats">
               {CATEGORIAS.map((cat) => {
                 const qtd = cat.id === "todos"
-                  ? disponiveis.length
-                  : disponiveis.filter((p) => combinaCategoria(p, cat.id)).length;
+                  ? gruposBase.length
+                  : gruposBase.filter((g) => combinaCategoria(g.base, cat.id)).length;
                 if (qtd === 0 && cat.id !== "todos" && categoria !== cat.id) return null;
                 return (
                   <button
@@ -402,7 +413,7 @@ function CatalogoPublico() {
             {filtrados.length === 0 ? (
               <div className="cat-empty">
                 <ShoppingBag size={30} style={{ marginBottom: 10, opacity: 0.5 }} />
-                <div>{disponiveis.length === 0 ? (view === "encomenda" ? "Nenhum item sob encomenda no momento." : "Nenhum produto disponível no momento.") : "Nada encontrado nessa categoria ou busca."}</div>
+                <div>{gruposBase.length === 0 ? (view === "encomenda" ? "Nenhum item sob encomenda no momento." : "Nenhum produto disponível no momento.") : "Nada encontrado nessa categoria ou busca."}</div>
               </div>
             ) : (
               <div className="cat-grid">
@@ -440,16 +451,21 @@ function CatalogoPublico() {
 
                         {!p.sobEncomenda && temVariosTamanhos && (
                           <div className="cat-tamanhos">
-                            {g.variantes.map((v) => (
-                              <button
-                                key={v.id}
-                                type="button"
-                                className={v.id === p.id ? "on" : ""}
-                                onClick={() => setEscolhas((e) => ({ ...e, [g.id]: v.id }))}
-                              >
-                                {v.tamanho || "Único"}
-                              </button>
-                            ))}
+                            {g.variantes.map((v) => {
+                              const semEstoque = Number(v.estoque) <= 0;
+                              return (
+                                <button
+                                  key={v.id}
+                                  type="button"
+                                  disabled={semEstoque}
+                                  title={semEstoque ? "Esgotado" : ""}
+                                  className={`${v.id === p.id ? "on" : ""} ${semEstoque ? "off" : ""}`}
+                                  onClick={() => !semEstoque && setEscolhas((e) => ({ ...e, [g.id]: v.id }))}
+                                >
+                                  {v.tamanho || "Único"}
+                                </button>
+                              );
+                            })}
                           </div>
                         )}
 
