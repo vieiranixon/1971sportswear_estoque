@@ -46,6 +46,7 @@
   .btn-principal:active { background: #C79A31; }
 
   .rodape { margin-top: 26px; color: var(--ink-soft); font-size: 12.5px; line-height: 1.9; }
+  .rodape .destaque { color: var(--sage); font-weight: 600; }
   .rodape .marca { margin-top: 12px; color: var(--rust); font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
 
   .modal { position: fixed; inset: 0; background: rgba(6,5,4,.94); display: flex;
@@ -112,7 +113,8 @@
 
   <div class="rodape">
     <div class="linha">Envio para todo o Brasil</div>
-    <div class="linha">Pix · Cartão em até 12x</div>
+    <div class="linha destaque">Dinheiro / Pix / Débito — 5% de desconto</div>
+    <div class="linha">Cartão de crédito em até 3x sem juros</div>
     <div class="marca">1971sportswear.netlify.app</div>
   </div>
 </div>
@@ -128,7 +130,7 @@
 <div class="toast" id="toast" hidden></div>
 
 <script>
-  var LINK = "https://1971sportswear.netlify.app/";
+  var LINK = "https://1971sportswear.netlify.app/loja.html";
 
   function toast(msg) {
     var t = document.getElementById("toast");
