@@ -314,13 +314,64 @@ function OpcaoFundo({ ligado, aoMudar }) {
   );
 }
 
+// ---------- Perfumes ----------
+const PERFUME_HEADERS_PADRAO = [
+  "ID", "Marca", "Nome", "Volume (ml)", "Custo (R$)", "Margem (%)",
+  "Preço de Venda (R$)", "Estoque Atual", "Estoque Minímo", "Imagem"
+];
+
+const MARGEM_PADRAO = 30;
+
+// margem sobre o preço de venda (mesma conta usada nas camisas)
+function precoPelaMargem(custo, margem) {
+  const c = Number(custo) || 0;
+  const m = Number(margem) || 0;
+  if (c <= 0 || m <= 0 || m >= 100) return c;
+  return c / (1 - m / 100);
+}
+
+function margemPeloPreco(custo, preco) {
+  const c = Number(custo) || 0;
+  const p = Number(preco) || 0;
+  if (p <= 0) return 0;
+  return ((p - c) / p) * 100;
+}
+
+function perfumeToSheetRow(p, headers) {
+  const cols = headers && headers.length ? headers : PERFUME_HEADERS_PADRAO;
+  // comparação por prefixo: "Custo (R$)" vira "custo r" ao normalizar
+  const regras = [
+    ["estoque minimo", () => Number(p.estoqueMinimo) || 0],
+    ["estoque atual", () => Number(p.estoque) || 0],
+    ["estoque", () => Number(p.estoque) || 0],
+    ["preco de venda", () => Number(p.preco) || 0],
+    ["preco", () => Number(p.preco) || 0],
+    ["custo", () => Number(p.custo) || 0],
+    ["margem", () => Number(p.margem) || 0],
+    ["volume", () => p.volume],
+    ["marca", () => p.marca],
+    ["nome", () => p.nome],
+    ["imagem", () => (p.imagens || []).join("\n")],
+    ["foto", () => (p.imagens || []).join("\n")],
+  ];
+  const linha = {};
+  cols.forEach((col) => {
+    const k = normKey(col);
+    if (k === "id") return;
+    const regra = regras.find(([pre]) => k === pre || k.startsWith(pre + " "));
+    if (regra) linha[col] = regra[1]();
+  });
+  return linha;
+}
+
 const emptyForm = {
-  nome: "", tamanho: "", qtdPorTamanho: {}, categoria: "", versao: "", campeonato: "", genero: "",
+  nome: "", tamanho: "", qtdPorTamanho: {}, marca: "", volume: "", margem: String(MARGEM_PADRAO), categoria: "", versao: "", campeonato: "", genero: "",
   temporada: "", custo: "", preco: "", estoque: "", estoqueMinimo: "", imagens: [],
 };
 
 function CadastroProduto() {
-  const [destino, setDestino] = useState("estoque"); // "estoque" | "encomenda"
+  const [destino, setDestino] = useState("estoque"); // "estoque" | "encomenda" | "perfume"
+  const perfHeadersRef = useRef(null);
   const [form, setForm] = useState(emptyForm);
   const [salvando, setSalvando] = useState(false);
   const [uploadingImg, setUploadingImg] = useState(false);
@@ -355,6 +406,8 @@ function CadastroProduto() {
       const encs = Array.isArray(raw.encomendas) ? raw.encomendas : [];
       if (prods[0]) headersRef.current = Object.keys(prods[0]);
       if (encs[0]) encHeadersRef.current = Object.keys(encs[0]);
+      const perfs = Array.isArray(raw.perfumes) ? raw.perfumes : [];
+      if (perfs[0]) perfHeadersRef.current = Object.keys(perfs[0]);
       setRawProducts(prods);
       setRawEncomendas(encs);
     } catch (e) {
@@ -560,13 +613,40 @@ function CadastroProduto() {
     ? ((Number(form.preco) - Number(form.custo || 0)) / Number(form.preco)) * 100
     : 0;
 
+  // Custo ou margem mudou → recalcula o preço. Preço digitado → recalcula a
+  // margem, para você poder arredondar o valor e ver quanto sobra.
+  function mudarCustoOuMargem(campo, valor) {
+    setForm((f) => {
+      const novo = { ...f, [campo]: valor };
+      const preco = precoPelaMargem(novo.custo, novo.margem);
+      return { ...novo, preco: preco ? preco.toFixed(2) : "" };
+    });
+  }
+
+  function mudarPrecoPerfume(valor) {
+    setForm((f) => ({ ...f, preco: valor, margem: margemPeloPreco(f.custo, valor).toFixed(1) }));
+  }
+
   async function salvar(e) {
     e.preventDefault();
     if (!form.nome.trim()) { showToast("Informe o nome do produto", "erro"); return; }
     setSalvando(true);
     const id = uid();
     try {
-      if (destino === "encomenda") {
+      if (destino === "perfume") {
+        const clean = {
+          marca: (form.marca || "").trim(),
+          nome: form.nome.trim(),
+          volume: String(form.volume || "").trim(),
+          custo: Number(form.custo) || 0,
+          margem: Number(form.margem) || 0,
+          preco: Number(form.preco) || 0,
+          estoque: Number(form.estoque) || 0,
+          estoqueMinimo: Number(form.estoqueMinimo) || 0,
+          imagens: form.imagens || [],
+        };
+        await gasPost({ action: "upsertPerfume", id, data: perfumeToSheetRow(clean, perfHeadersRef.current) });
+      } else if (destino === "encomenda") {
         const clean = {
           nome: form.nome.trim(),
           versao: form.versao.trim(),
@@ -610,7 +690,11 @@ function CadastroProduto() {
         ? Object.values(form.qtdPorTamanho || {}).filter((q) => Number(q) > 0).length || 1
         : 1;
       setUltimoSalvo({ nome: form.nome.trim(), destino, linhas: qtdLinhas });
-      showToast(qtdLinhas > 1 ? `${qtdLinhas} tamanhos cadastrados!` : "Produto cadastrado!");
+      showToast(
+        destino === "perfume" ? "Perfume cadastrado!"
+        : qtdLinhas > 1 ? `${qtdLinhas} tamanhos cadastrados!`
+        : "Produto cadastrado!"
+      );
 
       // Limpa a foto e o nome sempre; os demais campos ficam se "manter dados"
       // estiver marcado — ajuda a cadastrar vários itens parecidos em sequência.
@@ -833,6 +917,9 @@ function CadastroProduto() {
           <button type="button" className={destino === "encomenda" ? "active" : ""} onClick={() => setDestino("encomenda")}>
             Sob encomenda
           </button>
+          <button type="button" className={destino === "perfume" ? "active" : ""} onClick={() => setDestino("perfume")}>
+            Perfume
+          </button>
         </div>
 
         <form onSubmit={salvar}>
@@ -857,9 +944,9 @@ function CadastroProduto() {
 
           <div className="cad-card">
             <div className="cad-field">
-              <label>Nome do produto *</label>
+              <label>{destino === "perfume" ? "Nome do perfume *" : "Nome do produto *"}</label>
               <input value={form.nome} onChange={(e) => setForm((f) => ({ ...f, nome: e.target.value }))}
-                placeholder="Ex: S C Corinthians" required />
+                placeholder={destino === "perfume" ? "Ex: Essencial Oud" : "Ex: S C Corinthians"} required />
             </div>
 
             {destino === "estoque" && (
@@ -869,16 +956,30 @@ function CadastroProduto() {
               </div>
             )}
 
-            <div className="cad-row2">
-              <div className="cad-field">
-                <label>Versão</label>
-                <input value={form.versao} onChange={(e) => setForm((f) => ({ ...f, versao: e.target.value }))} placeholder="Torcedor / Away" />
+            {destino === "perfume" ? (
+              <div className="cad-row2">
+                <div className="cad-field">
+                  <label>Marca</label>
+                  <input value={form.marca} onChange={(e) => setForm((f) => ({ ...f, marca: e.target.value }))} placeholder="Ex: Natura" />
+                </div>
+                <div className="cad-field">
+                  <label>Volume (ml)</label>
+                  <input type="number" min="0" inputMode="numeric" value={form.volume}
+                    onChange={(e) => setForm((f) => ({ ...f, volume: e.target.value }))} placeholder="100" />
+                </div>
               </div>
-              <div className="cad-field">
-                <label>Temporada</label>
-                <input value={form.temporada} onChange={(e) => setForm((f) => ({ ...f, temporada: e.target.value }))} placeholder="2026/27" />
+            ) : (
+              <div className="cad-row2">
+                <div className="cad-field">
+                  <label>Versão</label>
+                  <input value={form.versao} onChange={(e) => setForm((f) => ({ ...f, versao: e.target.value }))} placeholder="Torcedor / Away" />
+                </div>
+                <div className="cad-field">
+                  <label>Temporada</label>
+                  <input value={form.temporada} onChange={(e) => setForm((f) => ({ ...f, temporada: e.target.value }))} placeholder="2026/27" />
+                </div>
               </div>
-            </div>
+            )}
 
             {destino === "estoque" && (
               <div className="cad-row2">
@@ -901,22 +1002,59 @@ function CadastroProduto() {
           </div>
 
           <div className="cad-card">
-            <div className="cad-row2">
-              {destino === "estoque" && (
-                <div className="cad-field">
-                  <label>Custo (R$)</label>
-                  <input type="number" step="0.01" min="0" inputMode="decimal"
-                    value={form.custo} onChange={(e) => setForm((f) => ({ ...f, custo: e.target.value }))} />
+            {destino === "perfume" ? (
+              <>
+                <div className="cad-row2">
+                  <div className="cad-field">
+                    <label>Preço de compra (R$)</label>
+                    <input type="number" step="0.01" min="0" inputMode="decimal"
+                      value={form.custo} onChange={(e) => mudarCustoOuMargem("custo", e.target.value)} placeholder="0,00" />
+                  </div>
+                  <div className="cad-field">
+                    <label>Margem (%)</label>
+                    <input type="number" step="0.1" min="0" max="99" inputMode="decimal"
+                      value={form.margem} onChange={(e) => mudarCustoOuMargem("margem", e.target.value)} placeholder="30" />
+                  </div>
                 </div>
-              )}
-              <div className="cad-field">
-                <label>Preço de venda (R$)</label>
-                <input type="number" step="0.01" min="0" inputMode="decimal"
-                  value={form.preco} onChange={(e) => setForm((f) => ({ ...f, preco: e.target.value }))} />
+                <div className="cad-field">
+                  <label>Preço de venda (R$)</label>
+                  <input type="number" step="0.01" min="0" inputMode="decimal"
+                    value={form.preco} onChange={(e) => mudarPrecoPerfume(e.target.value)} placeholder="0,00" />
+                  <div className="cad-dica">
+                    Sai do custo + margem. Se você digitar outro preço para arredondar, a margem se ajusta sozinha.
+                  </div>
+                </div>
+                <div className="cad-row2">
+                  <div className="cad-field">
+                    <label>Estoque atual</label>
+                    <input type="number" min="0" inputMode="numeric" value={form.estoque}
+                      onChange={(e) => setForm((f) => ({ ...f, estoque: e.target.value }))} />
+                  </div>
+                  <div className="cad-field">
+                    <label>Estoque mínimo</label>
+                    <input type="number" min="0" inputMode="numeric" value={form.estoqueMinimo}
+                      onChange={(e) => setForm((f) => ({ ...f, estoqueMinimo: e.target.value }))} placeholder="Alerta" />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="cad-row2">
+                {destino === "estoque" && (
+                  <div className="cad-field">
+                    <label>Custo (R$)</label>
+                    <input type="number" step="0.01" min="0" inputMode="decimal"
+                      value={form.custo} onChange={(e) => setForm((f) => ({ ...f, custo: e.target.value }))} />
+                  </div>
+                )}
+                <div className="cad-field">
+                  <label>Preço de venda (R$)</label>
+                  <input type="number" step="0.01" min="0" inputMode="decimal"
+                    value={form.preco} onChange={(e) => setForm((f) => ({ ...f, preco: e.target.value }))} />
+                </div>
               </div>
-            </div>
+            )}
 
-            {destino === "estoque" && Number(form.preco) > 0 && (
+            {destino !== "encomenda" && Number(form.preco) > 0 && (
               <div className="cad-derived">
                 Lucro por unidade: <strong>{BRL(Number(form.preco) - Number(form.custo || 0))}</strong>
                 {"  ·  "}Margem: <strong>{margem.toFixed(1)}%</strong>
