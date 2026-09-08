@@ -54,6 +54,7 @@ const Download = (p) => <Icon {...p}><path d="M12 3v12"/><path d="M7 10l5 5 5-5"
 const Upload = (p) => <Icon {...p}><path d="M12 21V9"/><path d="M7 14l5-5 5 5"/><path d="M5 21h14"/></Icon>;
 const RefreshCw = (p) => <Icon {...p}><path d="M21 12a9 9 0 0 0-9-9 9 9 0 0 0-7.5 4"/><path d="M3 5v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9 9 0 0 0 7.5-4"/><path d="M21 19v-5h-5"/></Icon>;
 const WifiOff = (p) => <Icon {...p}><line x1="2" y1="2" x2="22" y2="22"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M5 12.5a10 10 0 0 1 3-2.1"/><path d="M19 12.5a10 10 0 0 0-2.5-1.9"/><path d="M12 20h.01"/></Icon>;
+const Sparkles = (p) => <Icon {...p}><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M18 4v3M19.5 5.5h-3"/></Icon>;
 
 // URL do Google Apps Script implantado (planilha "Controle de Estoque").
 const GAS_URL =
@@ -319,6 +320,78 @@ function sheetToProduct(row) {
   };
 }
 
+// ---------- Perfumes ----------
+// Aba própria, com marca e volume no lugar de tamanho/campeonato. O preço de
+// venda sai do custo + margem, mas fica editável: se você digitar um preço
+// "redondo" (R$ 89,90), a margem é recalculada a partir dele.
+const PERFUME_HEADERS_PADRAO = [
+  "ID", "Marca", "Nome", "Volume (ml)", "Custo (R$)", "Margem (%)",
+  "Preço de Venda (R$)", "Estoque Atual", "Estoque Minímo", "Imagem"
+];
+
+const MARGEM_PADRAO = 30;
+
+// margem sobre o preço de venda (mesma conta que o painel já usa nas camisas)
+function precoPelaMargem(custo, margem) {
+  const c = Number(custo) || 0;
+  const m = Number(margem) || 0;
+  if (c <= 0 || m <= 0 || m >= 100) return c;
+  return c / (1 - m / 100);
+}
+
+function margemPeloPreco(custo, preco) {
+  const c = Number(custo) || 0;
+  const p = Number(preco) || 0;
+  if (p <= 0) return 0;
+  return ((p - c) / p) * 100;
+}
+
+function sheetToPerfume(row) {
+  return {
+    id: pickByNorm(row, ["id"]) || uid(),
+    marca: String(pickByNorm(row, ["marca"]) || ""),
+    nome: String(pickByNorm(row, ["nome", "nome do produto"]) || ""),
+    volume: String(pickByNorm(row, ["volume ml", "volume", "ml"]) || ""),
+    custo: Number(pickByNorm(row, ["custo"])) || 0,
+    margem: Number(pickByNorm(row, ["margem"])) || 0,
+    preco: Number(pickByNorm(row, ["preco de venda", "preco"])) || 0,
+    estoque: Number(pickByNorm(row, ["estoque atual", "estoque"])) || 0,
+    estoqueMinimo: Number(pickByNorm(row, ["estoque minimo"])) || 0,
+    imagens: String(pickByNorm(row, ["imagem", "imagens", "foto", "fotos"]) || "")
+      .split(/\r?\n|,\s*(?=https?:\/\/)/)
+      .map((s) => s.trim())
+      .filter(Boolean),
+  };
+}
+
+function perfumeToSheetRow(p, headers) {
+  const cols = headers && headers.length ? headers : PERFUME_HEADERS_PADRAO;
+  // A comparação é por prefixo porque os cabeçalhos reais trazem sufixos:
+  // "Custo (R$)" vira "custo r", "Preço de Venda (R$)" vira "preco de venda r".
+  const regras = [
+    ["estoque minimo", () => Number(p.estoqueMinimo) || 0],
+    ["estoque atual", () => Number(p.estoque) || 0],
+    ["estoque", () => Number(p.estoque) || 0],
+    ["preco de venda", () => Number(p.preco) || 0],
+    ["preco", () => Number(p.preco) || 0],
+    ["custo", () => Number(p.custo) || 0],
+    ["margem", () => Number(p.margem) || 0],
+    ["volume", () => p.volume],
+    ["marca", () => p.marca],
+    ["nome", () => p.nome],
+    ["imagem", () => (p.imagens || []).join("\n")],
+    ["foto", () => (p.imagens || []).join("\n")],
+  ];
+  const linha = {};
+  cols.forEach((col) => {
+    const k = normKey(col);
+    if (k === "id") return;
+    const regra = regras.find(([prefixo]) => k === prefixo || k.startsWith(prefixo + " "));
+    if (regra) linha[col] = regra[1]();
+  });
+  return linha;
+}
+
 function sheetToEncomenda(row) {
   return {
     id: pickByNorm(row, ["id"]) || uid(),
@@ -435,6 +508,15 @@ function ControleEstoque() {
   const [products, setProducts] = useState([]);
   const [movements, setMovements] = useState([]);
   const [encomendas, setEncomendas] = useState([]);
+  const [perfumes, setPerfumes] = useState([]);
+  const perfHeadersRef = useRef(null);
+  const [modalPerfume, setModalPerfume] = useState(null);
+  const [confirmDeletePerfume, setConfirmDeletePerfume] = useState(null);
+  const filePerfumeRef = useRef(null);
+  const [perfForm, setPerfForm] = useState({
+    marca: "", nome: "", volume: "", custo: "", margem: String(MARGEM_PADRAO),
+    preco: "", estoque: "", estoqueMinimo: "", imagens: [],
+  });
   const [loaded, setLoaded] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [offline, setOffline] = useState(false);
@@ -473,6 +555,8 @@ function ControleEstoque() {
       const rawProducts = Array.isArray(raw.products) ? raw.products : [];
       const rawMovements = Array.isArray(raw.movements) ? raw.movements : [];
       const rawEncomendas = Array.isArray(raw.encomendas) ? raw.encomendas : [];
+      const rawPerfumes = Array.isArray(raw.perfumes) ? raw.perfumes : [];
+      if (rawPerfumes[0]) perfHeadersRef.current = Object.keys(rawPerfumes[0]);
       if (rawProducts[0]) headersRef.current = Object.keys(rawProducts[0]);
       if (rawEncomendas[0]) encHeadersRef.current = Object.keys(rawEncomendas[0]);
       setProducts(rawProducts.map(sheetToProduct));
@@ -482,6 +566,7 @@ function ControleEstoque() {
           .sort((a, b) => new Date(b.data) - new Date(a.data))
       );
       setEncomendas(rawEncomendas.map(sheetToEncomenda));
+      setPerfumes(rawPerfumes.map(sheetToPerfume));
       setOffline(false);
     } catch (e) {
       setOffline(true);
@@ -710,6 +795,102 @@ function ControleEstoque() {
       await carregarDados();
     } catch (e) {
       showToast("Não consegui criar esse tamanho", "erro");
+    }
+  }
+
+  // ---------- Perfumes ----------
+
+  function openNewPerfume() {
+    setPerfForm({
+      marca: "", nome: "", volume: "", custo: "", margem: String(MARGEM_PADRAO),
+      preco: "", estoque: "", estoqueMinimo: "", imagens: [],
+    });
+    setModalPerfume({});
+  }
+
+  function openEditPerfume(p) {
+    setPerfForm({
+      marca: p.marca || "", nome: p.nome || "", volume: p.volume || "",
+      custo: p.custo, margem: p.margem || MARGEM_PADRAO, preco: p.preco,
+      estoque: p.estoque, estoqueMinimo: p.estoqueMinimo ?? "",
+      imagens: Array.isArray(p.imagens) ? p.imagens : [],
+    });
+    setModalPerfume(p);
+  }
+
+  // Custo ou margem mudou → recalcula o preço.
+  function mudarCustoOuMargem(campo, valor) {
+    setPerfForm((f) => {
+      const novo = { ...f, [campo]: valor };
+      const preco = precoPelaMargem(novo.custo, novo.margem);
+      return { ...novo, preco: preco ? preco.toFixed(2) : "" };
+    });
+  }
+
+  // Preço digitado à mão → recalcula a margem, para você ver quanto sobra.
+  function mudarPreco(valor) {
+    setPerfForm((f) => ({ ...f, preco: valor, margem: margemPeloPreco(f.custo, valor).toFixed(1) }));
+  }
+
+  function handleAddImagePerfume(fileList) {
+    return enviarFotos(fileList, (url) => setPerfForm((f) => ({ ...f, imagens: [...(f.imagens || []), url] })));
+  }
+
+  async function savePerfume(e) {
+    e.preventDefault();
+    if (!perfForm.nome.trim()) { showToast("Informe o nome do perfume", "erro"); return; }
+    const clean = {
+      marca: perfForm.marca.trim(),
+      nome: perfForm.nome.trim(),
+      volume: String(perfForm.volume).trim(),
+      custo: Number(perfForm.custo) || 0,
+      margem: Number(perfForm.margem) || 0,
+      preco: Number(perfForm.preco) || 0,
+      estoque: Number(perfForm.estoque) || 0,
+      estoqueMinimo: Number(perfForm.estoqueMinimo) || 0,
+      imagens: perfForm.imagens || [],
+    };
+    const id = modalPerfume && modalPerfume.id ? modalPerfume.id : uid();
+    setSyncing(true);
+    try {
+      await gasPost({ action: "upsertPerfume", id, data: perfumeToSheetRow(clean, perfHeadersRef.current) });
+      showToast(modalPerfume && modalPerfume.id ? "Perfume atualizado" : "Perfume cadastrado");
+      setModalPerfume(null);
+      await carregarDados(false);
+    } catch (err) {
+      showToast("Não consegui salvar na planilha", "erro");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  async function deletePerfume(p) {
+    setSyncing(true);
+    try {
+      await gasPost({ action: "deletePerfume", id: p.id });
+      showToast("Perfume excluído");
+      setConfirmDeletePerfume(null);
+      await carregarDados(false);
+    } catch (err) {
+      showToast("Não consegui excluir", "erro");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  // Ajuste rápido de estoque: perfume não passa pelas movimentações das
+  // camisas, então gravamos direto na linha.
+  async function ajustarPerfume(p, delta) {
+    const novo = Math.max(0, (Number(p.estoque) || 0) + delta);
+    if (novo === Number(p.estoque)) return;
+    try {
+      await gasPost({
+        action: "upsertPerfume", id: p.id,
+        data: perfumeToSheetRow({ ...p, estoque: novo }, perfHeadersRef.current),
+      });
+      setPerfumes((lista) => lista.map((x) => (x.id === p.id ? { ...x, estoque: novo } : x)));
+    } catch (e) {
+      showToast("Não consegui atualizar o estoque", "erro");
     }
   }
 
@@ -1221,6 +1402,9 @@ function ControleEstoque() {
           <button className={`est-tab ${tab === "encomendas" ? "active" : ""}`} onClick={() => setTab("encomendas")}>
             <Package size={15} /> Sob Encomenda
           </button>
+          <button className={`est-tab ${tab === "perfumes" ? "active" : ""}`} onClick={() => setTab("perfumes")}>
+            <Sparkles size={15} /> Perfumes
+          </button>
           <button className={`est-tab ${tab === "catalogo" ? "active" : ""}`} onClick={() => setTab("catalogo")}>
             <Send size={15} /> Catálogo
           </button>
@@ -1446,6 +1630,74 @@ function ControleEstoque() {
         </>
       )}
 
+      {tab === "perfumes" && (
+        <>
+          <div className="est-actions">
+            <button className="est-btn est-btn-primary" onClick={openNewPerfume}>
+              <Plus size={15} /> Novo perfume
+            </button>
+          </div>
+
+          {perfumes.length === 0 ? (
+            <div className="est-empty">
+              <Sparkles size={30} style={{ marginBottom: 10, opacity: 0.5 }} />
+              <div>Nenhum perfume cadastrado ainda.</div>
+            </div>
+          ) : (
+            <div className="est-grid">
+              {perfumes.map((p) => {
+                const baixo = Number(p.estoqueMinimo) > 0 && Number(p.estoque) <= Number(p.estoqueMinimo);
+                const zerado = Number(p.estoque) <= 0;
+                return (
+                  <div className="est-card" key={p.id}>
+                    <div className="est-card-img">
+                      {p.imagens && p.imagens[0] ? (
+                        <>
+                          <img src={p.imagens[0]} alt={p.nome} />
+                          {p.imagens.length > 1 && <span className="est-photo-count">+{p.imagens.length - 1}</span>}
+                        </>
+                      ) : <ImagePlus size={26} />}
+                    </div>
+                    <div className="est-card-body">
+                      <div className="est-card-head">
+                        <div className="est-card-name">
+                          {p.nome}
+                          {p.volume && <span className="est-size-tag">{p.volume}ml</span>}
+                        </div>
+                      </div>
+                      {p.marca && <div className="est-card-cat">{p.marca}</div>}
+                      <div className="est-card-row">
+                        <span className="est-price">{BRL(p.preco)}</span>
+                        <span className="est-margin">{(Number(p.margem) || margemPeloPreco(p.custo, p.preco)).toFixed(0)}% margem</span>
+                      </div>
+                      <div className="est-card-row">
+                        <span className={`est-badge ${zerado ? "" : baixo ? "est-badge-low" : "est-badge-ok"}`}>
+                          {p.estoque} em estoque
+                        </span>
+                        <div className="est-tam-acoes">
+                          <button className="est-icon-btn" onClick={() => ajustarPerfume(p, -1)} title="Baixar 1" disabled={zerado}>
+                            <ArrowDownCircle size={15} />
+                          </button>
+                          <button className="est-icon-btn" onClick={() => ajustarPerfume(p, 1)} title="Adicionar 1">
+                            <ArrowUpCircle size={15} />
+                          </button>
+                          <button className="est-icon-btn" onClick={() => openEditPerfume(p)} title="Editar"><Pencil size={14} /></button>
+                          <button className="est-icon-btn danger" onClick={() => setConfirmDeletePerfume(p)} title="Excluir"><Trash2 size={14} /></button>
+                        </div>
+                      </div>
+                      <div className="est-card-total">
+                        <span>Custo {BRL(p.custo)}</span>
+                        <span className="ok">Lucro {BRL((Number(p.preco) || 0) - (Number(p.custo) || 0))}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
       {tab === "catalogo" && (
         <>
           <div className="est-toggle" style={{ marginBottom: 14, maxWidth: 360 }}>
@@ -1502,6 +1754,106 @@ function ControleEstoque() {
             </div>
           )}
         </>
+      )}
+
+      {modalPerfume !== null && (
+        <div className="est-modal-overlay" onClick={() => setModalPerfume(null)}>
+          <div className="est-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>{modalPerfume.id ? "Editar perfume" : "Novo perfume"}</h3>
+            <form onSubmit={savePerfume}>
+              <div className="est-field">
+                <label>Fotos</label>
+                <div className="est-dica">Use ‹ › para mudar a ordem. A primeira é a capa no catálogo.</div>
+                <OpcaoFundoEst ligado={tirarFundo} aoMudar={setTirarFundo} />
+                <GaleriaEst
+                  fotos={perfForm.imagens || []}
+                  onChange={(nova) => setPerfForm((f) => ({ ...f, imagens: nova }))}
+                  onAdd={() => filePerfumeRef.current?.click()}
+                  uploading={uploadingImg}
+                  progresso={progresso}
+                />
+                <input ref={filePerfumeRef} type="file" accept="image/*" multiple hidden
+                  onChange={(e) => { handleAddImagePerfume(e.target.files); e.target.value = ""; }} />
+              </div>
+
+              <div className="est-row2">
+                <div className="est-field">
+                  <label>Marca</label>
+                  <input value={perfForm.marca} onChange={(e) => setPerfForm((f) => ({ ...f, marca: e.target.value }))} placeholder="Ex: Natura" />
+                </div>
+                <div className="est-field">
+                  <label>Volume (ml)</label>
+                  <input type="number" min="0" inputMode="numeric" value={perfForm.volume}
+                    onChange={(e) => setPerfForm((f) => ({ ...f, volume: e.target.value }))} placeholder="100" />
+                </div>
+              </div>
+
+              <div className="est-field">
+                <label>Nome do perfume</label>
+                <input value={perfForm.nome} onChange={(e) => setPerfForm((f) => ({ ...f, nome: e.target.value }))} placeholder="Ex: Essencial Oud" required />
+              </div>
+
+              <div className="est-row2">
+                <div className="est-field">
+                  <label>Preço de compra (R$)</label>
+                  <input type="number" step="0.01" min="0" inputMode="decimal" value={perfForm.custo}
+                    onChange={(e) => mudarCustoOuMargem("custo", e.target.value)} placeholder="0,00" />
+                </div>
+                <div className="est-field">
+                  <label>Margem (%)</label>
+                  <input type="number" step="0.1" min="0" max="99" inputMode="decimal" value={perfForm.margem}
+                    onChange={(e) => mudarCustoOuMargem("margem", e.target.value)} placeholder="30" />
+                </div>
+              </div>
+
+              <div className="est-field">
+                <label>Preço de venda (R$)</label>
+                <input type="number" step="0.01" min="0" inputMode="decimal" value={perfForm.preco}
+                  onChange={(e) => mudarPreco(e.target.value)} placeholder="0,00" />
+                <div className="est-dica">
+                  Calculado a partir do custo + margem. Se você digitar outro preço (para arredondar),
+                  a margem se ajusta sozinha. Lucro: {BRL((Number(perfForm.preco) || 0) - (Number(perfForm.custo) || 0))}
+                </div>
+              </div>
+
+              <div className="est-row2">
+                <div className="est-field">
+                  <label>Estoque atual</label>
+                  <input type="number" min="0" inputMode="numeric" value={perfForm.estoque}
+                    onChange={(e) => setPerfForm((f) => ({ ...f, estoque: e.target.value }))} />
+                </div>
+                <div className="est-field">
+                  <label>Estoque mínimo</label>
+                  <input type="number" min="0" inputMode="numeric" value={perfForm.estoqueMinimo}
+                    onChange={(e) => setPerfForm((f) => ({ ...f, estoqueMinimo: e.target.value }))} placeholder="Alerta" />
+                </div>
+              </div>
+
+              <div className="est-modal-actions">
+                <button type="button" className="est-btn est-btn-ghost" onClick={() => setModalPerfume(null)}>Cancelar</button>
+                <button type="submit" className="est-btn est-btn-primary" disabled={syncing}><Check size={15} /> Salvar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {confirmDeletePerfume && (
+        <div className="est-modal-overlay" onClick={() => setConfirmDeletePerfume(null)}>
+          <div className="est-modal" style={{ width: 340 }} onClick={(e) => e.stopPropagation()}>
+            <h3>Remover perfume?</h3>
+            <p style={{ fontSize: 14, color: "var(--ink-soft)" }}>
+              "{confirmDeletePerfume.nome}" será removido da planilha. Essa ação não pode ser desfeita.
+            </p>
+            <div className="est-modal-actions">
+              <button className="est-btn est-btn-ghost" onClick={() => setConfirmDeletePerfume(null)}>Cancelar</button>
+              <button className="est-btn est-btn-primary" style={{ background: "var(--danger)", color: "#fff" }}
+                onClick={() => deletePerfume(confirmDeletePerfume)} disabled={syncing}>
+                <Trash2 size={15} /> Remover
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {modalModelo !== null && (
