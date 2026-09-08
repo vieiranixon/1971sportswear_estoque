@@ -81,6 +81,30 @@ function pickByNorm(rawObj, patterns) {
   return "";
 }
 
+// Perfume vem de uma aba própria, com marca e volume no lugar de tamanho e
+// campeonato. Convertemos para o mesmo formato dos outros itens para que
+// entre na busca, nas categorias e no card sem tratamento especial.
+function sheetToPerfume(row) {
+  const marca = String(pickByNorm(row, ["marca"]) || "");
+  const volume = String(pickByNorm(row, ["volume ml", "volume", "ml"]) || "");
+  return {
+    id: pickByNorm(row, ["id"]) || Math.random().toString(36),
+    nome: String(pickByNorm(row, ["nome", "nome do produto"]) || ""),
+    tamanho: "",
+    categoria: "Perfume",
+    versao: marca,
+    campeonato: volume ? `${volume}ml` : "",
+    genero: "",
+    temporada: "",
+    preco: Number(pickByNorm(row, ["preco de venda", "preco"])) || 0,
+    estoque: Number(pickByNorm(row, ["estoque atual", "estoque"])) || 0,
+    imagens: String(pickByNorm(row, ["imagem", "imagens", "foto", "fotos"]) || "")
+      .split(/\r?\n|,\s*(?=https?:\/\/)/)
+      .map((s) => s.trim())
+      .filter(Boolean),
+  };
+}
+
 function sheetToProduct(row) {
   return {
     id: pickByNorm(row, ["id"]) || Math.random().toString(36),
@@ -227,7 +251,11 @@ function CatalogoPublico() {
       .then((raw) => {
         const rawProducts = Array.isArray(raw.products) ? raw.products : [];
         const rawEncomendas = Array.isArray(raw.encomendas) ? raw.encomendas : [];
-        setProducts(rawProducts.map(sheetToProduct));
+        const rawPerfumes = Array.isArray(raw.perfumes) ? raw.perfumes : [];
+        setProducts([
+          ...rawProducts.map(sheetToProduct),
+          ...rawPerfumes.map(sheetToPerfume),
+        ]);
         setEncomendas(rawEncomendas.map(sheetToEncomenda));
       })
       .catch(() => setErro(true))
@@ -253,7 +281,9 @@ function CatalogoPublico() {
         p.nome.toLowerCase().includes(q) ||
         (p.categoria || "").toLowerCase().includes(q) ||
         (p.campeonato || "").toLowerCase().includes(q) ||
-        (p.temporada || "").toLowerCase().includes(q)
+        (p.temporada || "").toLowerCase().includes(q) ||
+        // versao guarda a marca no caso dos perfumes
+        (p.versao || "").toLowerCase().includes(q)
       );
     });
   }, [disponiveis, search, categoria]);
@@ -441,7 +471,7 @@ function CatalogoPublico() {
             </div>
             <div className="cat-search">
               <Search size={16} />
-              <input placeholder="Buscar por time, campeonato…" value={search} onChange={(e) => setSearch(e.target.value)} />
+              <input placeholder="Buscar por time, marca, campeonato…" value={search} onChange={(e) => setSearch(e.target.value)} />
             </div>
 
             <div className="cat-cats">
