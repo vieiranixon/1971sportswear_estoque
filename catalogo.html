@@ -300,7 +300,9 @@ function CatalogoPublico() {
 
   function pedirNoWhatsapp(p) {
     if (!WHATSAPP_NUMERO) return;
-    const texto = `Olá! Tenho interesse em: ${p.nome}${p.tamanho ? " (" + p.tamanho + ")" : ""} — ${BRL(p.preco)}`;
+    const texto = p.sobEncomenda
+      ? `Olá! Tenho interesse em: ${p.nome}${p.versao ? " (" + p.versao + ")" : ""}. Gostaria de saber o valor e o prazo.`
+      : `Olá! Tenho interesse em: ${p.nome}${p.tamanho ? " (" + p.tamanho + ")" : ""} — ${BRL(p.preco)}`;
     window.open(`https://wa.me/${WHATSAPP_NUMERO}?text=${encodeURIComponent(texto)}`, "_blank");
   }
 
@@ -520,9 +522,11 @@ function CatalogoPublico() {
                           </div>
                         )}
 
-                        <div className="cat-price">{BRL(p.preco)}</div>
+                        {/* Sob encomenda não tem preço fechado: o valor depende
+                            do modelo e do prazo, então o cliente consulta. */}
+                        {!p.sobEncomenda && <div className="cat-price">{BRL(p.preco)}</div>}
                         {p.sobEncomenda ? (
-                          <span className="cat-badge cat-badge-encomenda">Sob encomenda</span>
+                          <span className="cat-badge cat-badge-encomenda">Consulte-nos</span>
                         ) : (
                           <span className="cat-badge cat-badge-ok">
                             {p.estoque} disponível(is){p.tamanho ? ` no ${p.tamanho}` : ""}
@@ -530,7 +534,7 @@ function CatalogoPublico() {
                         )}
                         {WHATSAPP_NUMERO && (
                           <button className="cat-wa-btn" onClick={() => pedirNoWhatsapp(p)}>
-                            <MessageCircle size={14} /> Pedir pelo WhatsApp
+                            <MessageCircle size={14} /> {p.sobEncomenda ? "Envie sua mensagem" : "Pedir pelo WhatsApp"}
                           </button>
                         )}
                       </div>
