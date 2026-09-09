@@ -496,12 +496,32 @@ const GRADE_INFANTIL = ["16", "18", "20", "22", "24", "26", "28"];
 // planilha, para mostrar a grade completa mesmo nos tamanhos que você nunca
 // cadastrou. Se não bater com nenhuma das duas (boné, perfume, "Único"),
 // mostramos só o que existe.
+// O mesmo tamanho aparece escrito de formas diferentes conforme o fornecedor.
+// Aqui unificamos para o nome usado na grade, senão um produto cadastrado como
+// "XGG" ficava sozinho, sem a grade completa.
+const EQUIV_TAMANHO = {
+  "PP": "P",
+  "XG": "GG",
+  "XGG": "3G",
+  "XXG": "3G",
+  "XXGG": "4G",
+  "XXXG": "4G",
+  "G1": "3G",
+  "G2": "4G"
+};
+function canonTamanho(t) {
+  const s = String(t || "").trim().toUpperCase().replace(/\s+/g, "");
+  return EQUIV_TAMANHO[s] || s;
+}
 function gradeDoModelo(variantes) {
-  const tams = variantes.map(v => String(v.tamanho || "").trim().toUpperCase()).filter(Boolean);
+  const tams = variantes.map(v => canonTamanho(v.tamanho)).filter(Boolean);
   if (tams.length === 0) return null;
-  if (tams.every(t => GRADE_ADULTO.includes(t))) return GRADE_ADULTO;
-  if (tams.every(t => GRADE_INFANTIL.includes(t))) return GRADE_INFANTIL;
-  return null;
+  // basta que os tamanhos conhecidos pertençam à grade: um tamanho fora do
+  // padrão não impede mais de mostrar a grade inteira
+  const naAdulto = tams.filter(t => GRADE_ADULTO.includes(t)).length;
+  const naInfantil = tams.filter(t => GRADE_INFANTIL.includes(t)).length;
+  if (naAdulto === 0 && naInfantil === 0) return null;
+  return naAdulto >= naInfantil ? GRADE_ADULTO : GRADE_INFANTIL;
 }
 
 // As imagens do Drive aceitam um sufixo de largura. Sem ele vem uma versão
@@ -514,7 +534,7 @@ function imgURL(url, largura) {
   return u.replace(/=[swh]\d+(-[a-z0-9]+)*$/i, "") + "=w" + largura;
 }
 function posicaoTamanho(t) {
-  const i = ORDEM_TAMANHOS.indexOf(String(t || "").trim().toUpperCase());
+  const i = ORDEM_TAMANHOS.indexOf(canonTamanho(t));
   return i === -1 ? 999 : i;
 }
 
@@ -541,22 +561,36 @@ function agruparPorTamanho(lista) {
 
     // Cada posição da grade vira uma "pílula". Se não existir linha para
     // aquele tamanho, ela aparece igual a um esgotado.
-    const pilulas = grade ? grade.map(t => {
-      const v = variantes.find(x => String(x.tamanho || "").trim().toUpperCase() === t);
-      return v ? {
-        tamanho: t,
+    let pilulas;
+    if (grade) {
+      pilulas = grade.map(t => {
+        const v = variantes.find(x => canonTamanho(x.tamanho) === t);
+        // mostramos o nome como está na planilha (XGG continua XGG);
+        // a equivalência serve só para achar a posição na grade
+        return v ? {
+          tamanho: v.tamanho || t,
+          variante: v,
+          disponivel: Number(v.estoque) > 0
+        } : {
+          tamanho: t,
+          variante: null,
+          disponivel: false
+        };
+      });
+      // tamanhos que não pertencem à grade (ex: "Único") entram no fim,
+      // para não sumirem do card
+      variantes.filter(v => v.tamanho && !grade.includes(canonTamanho(v.tamanho))).forEach(v => pilulas.push({
+        tamanho: v.tamanho,
         variante: v,
         disponivel: Number(v.estoque) > 0
-      } : {
-        tamanho: t,
-        variante: null,
-        disponivel: false
-      };
-    }) : variantes.map(v => ({
-      tamanho: v.tamanho || "Único",
-      variante: v,
-      disponivel: Number(v.estoque) > 0
-    }));
+      }));
+    } else {
+      pilulas = variantes.map(v => ({
+        tamanho: v.tamanho || "Único",
+        variante: v,
+        disponivel: Number(v.estoque) > 0
+      }));
+    }
     return {
       ...g,
       variantes,
@@ -590,19 +624,34 @@ const CATEGORIAS = [{
   id: "perfume",
   rotulo: "Perfume",
   termos: ["perfume"]
+},
+// "Diversos" não tem termos: recolhe tudo que não coube em nenhuma aba,
+// para nenhum produto ficar invisível ao cliente.
+{
+  id: "diversos",
+  rotulo: "Diversos",
+  termos: []
 }];
-function combinaCategoria(produto, idCategoria) {
-  if (idCategoria === "todos") return true;
-  const alvo = CATEGORIAS.find(x => x.id === idCategoria);
-  if (!alvo) return true;
 
-  // Quando o item tem categoria preenchida, ela manda — é o dado confiável.
-  // Só quando está em branco é que caímos no nome, para não classificar uma
-  // camisa como perfume porque a palavra apareceu no meio do nome.
+// Um produto pertence a uma aba nomeada quando a categoria (ou, na falta
+// dela, o nome) bate com algum termo.
+function ehDaCategoria(produto, alvo) {
+  if (!alvo || !alvo.termos.length) return false;
+  // A categoria preenchida manda — é o dado confiável. O nome só é
+  // consultado quando ela está em branco, senão uma camisa viraria perfume
+  // por causa de uma palavra no meio do nome.
   const cat = normKey(produto.categoria || "");
   if (cat) return alvo.termos.some(t => cat.includes(t));
   const nome = normKey(produto.nome || "");
   return alvo.termos.some(t => nome.includes(t));
+}
+function combinaCategoria(produto, idCategoria) {
+  if (idCategoria === "todos") return true;
+  if (idCategoria === "diversos") {
+    // sobra: não encaixou em nenhuma das abas nomeadas
+    return !CATEGORIAS.some(c => c.termos.length && ehDaCategoria(produto, c));
+  }
+  return ehDaCategoria(produto, CATEGORIAS.find(x => x.id === idCategoria));
 }
 function CatalogoPublico() {
   const [products, setProducts] = useState([]);
