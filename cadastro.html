@@ -409,7 +409,7 @@ function imagensDaLinha(rawRow) {
   return String(rawRow[col] || "").split(/\r?\n|,\s*(?=https?:\/\/)/).map(s => s.trim()).filter(Boolean);
 }
 const FALLBACK_HEADERS = ["ID", "Nome do Produto", "Tamanho", "Categoria", "Versão", "Campeonato", "Genêro", "Temporada", "Custo (R$)", "Preço de Venda (R$)", "Estoque Atual", "Estoque Minímo", "Imagem"];
-const ENCOMENDA_FALLBACK_HEADERS = ["ID", "Nome do Produto", "Versão", "Temporada", "Preço de Venda (R$)", "Imagem"];
+const ENCOMENDA_FALLBACK_HEADERS = ["ID", "Nome do Produto", "Categoria", "Versão", "Temporada", "Preço de Venda (R$)", "Imagem"];
 function productToSheetRow(p, headers) {
   const data = {};
   headers.forEach(h => {
@@ -424,7 +424,7 @@ function encomendaToSheetRow(p, headers) {
   headers.forEach(h => {
     const n = normKey(h);
     if (n === "id") return;
-    if (n.startsWith("nome")) data[h] = p.nome;else if (n.startsWith("versao")) data[h] = p.versao;else if (n.startsWith("temporada")) data[h] = p.temporada;else if (n.startsWith("preco")) data[h] = p.preco;else if (n.startsWith("imagem") || n.startsWith("foto")) data[h] = (p.imagens || []).join("\n");
+    if (n.startsWith("nome")) data[h] = p.nome;else if (n.startsWith("categoria")) data[h] = p.categoria || "";else if (n.startsWith("versao")) data[h] = p.versao;else if (n.startsWith("temporada")) data[h] = p.temporada;else if (n.startsWith("preco")) data[h] = p.preco;else if (n.startsWith("imagem") || n.startsWith("foto")) data[h] = (p.imagens || []).join("\n");
   });
   return data;
 }
@@ -1012,6 +1012,7 @@ function CadastroProduto() {
       } else if (destino === "encomenda") {
         const clean = {
           nome: form.nome.trim(),
+          categoria: form.categoria.trim(),
           versao: form.versao.trim(),
           temporada: form.temporada.trim(),
           preco: Number(form.preco) || 0,
@@ -1394,7 +1395,27 @@ function CadastroProduto() {
       categoria: e.target.value
     })),
     placeholder: "Futebol"
-  })), destino === "perfume" ? /*#__PURE__*/React.createElement("div", {
+  })), destino === "encomenda" && /*#__PURE__*/React.createElement("div", {
+    className: "cad-field"
+  }, /*#__PURE__*/React.createElement("label", null, "Categoria"), /*#__PURE__*/React.createElement("select", {
+    value: form.categoria,
+    onChange: e => setForm(f => ({
+      ...f,
+      categoria: e.target.value
+    }))
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "Selecione…"), /*#__PURE__*/React.createElement("option", {
+    value: "Futebol"
+  }, "Futebol"), /*#__PURE__*/React.createElement("option", {
+    value: "NBA"
+  }, "NBA"), /*#__PURE__*/React.createElement("option", {
+    value: "Boné"
+  }, "Boné"), /*#__PURE__*/React.createElement("option", {
+    value: "Perfume"
+  }, "Perfume")), /*#__PURE__*/React.createElement("div", {
+    className: "cad-dica"
+  }, "Define em qual aba o item aparece no catálogo.")), destino === "perfume" ? /*#__PURE__*/React.createElement("div", {
     className: "cad-row2"
   }, /*#__PURE__*/React.createElement("div", {
     className: "cad-field"

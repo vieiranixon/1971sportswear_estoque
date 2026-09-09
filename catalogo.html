@@ -478,6 +478,7 @@ function sheetToEncomenda(row) {
   return {
     id: pickByNorm(row, ["id"]) || Math.random().toString(36),
     nome: String(pickByNorm(row, ["nome do produto", "nome"]) || ""),
+    categoria: String(pickByNorm(row, ["categoria"]) || ""),
     versao: String(pickByNorm(row, ["versao"]) || ""),
     temporada: String(pickByNorm(row, ["temporada"]) || ""),
     preco: Number(pickByNorm(row, ["preco de venda", "preco"])) || 0,
@@ -594,10 +595,14 @@ function combinaCategoria(produto, idCategoria) {
   if (idCategoria === "todos") return true;
   const alvo = CATEGORIAS.find(x => x.id === idCategoria);
   if (!alvo) return true;
-  // olhamos categoria e nome, para pegar casos em que o tipo do item
-  // só aparece no nome do produto
-  const texto = normKey(`${produto.categoria || ""} ${produto.nome || ""}`);
-  return alvo.termos.some(t => texto.includes(t));
+
+  // Quando o item tem categoria preenchida, ela manda — é o dado confiável.
+  // Só quando está em branco é que caímos no nome, para não classificar uma
+  // camisa como perfume porque a palavra apareceu no meio do nome.
+  const cat = normKey(produto.categoria || "");
+  if (cat) return alvo.termos.some(t => cat.includes(t));
+  const nome = normKey(produto.nome || "");
+  return alvo.termos.some(t => nome.includes(t));
 }
 function CatalogoPublico() {
   const [products, setProducts] = useState([]);
@@ -627,7 +632,6 @@ function CatalogoPublico() {
     sobEncomenda: true,
     estoque: 0,
     tamanho: "",
-    categoria: "",
     campeonato: "",
     genero: ""
   })), [encomendas]);

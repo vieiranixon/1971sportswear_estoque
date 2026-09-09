@@ -910,19 +910,20 @@ function sheetToEncomenda(row) {
   return {
     id: pickByNorm(row, ["id"]) || uid(),
     nome: String(pickByNorm(row, ["nome do produto", "nome"]) || ""),
+    categoria: String(pickByNorm(row, ["categoria"]) || ""),
     versao: String(pickByNorm(row, ["versao"]) || ""),
     temporada: String(pickByNorm(row, ["temporada"]) || ""),
     preco: Number(pickByNorm(row, ["preco de venda", "preco"])) || 0,
     imagens: String(pickByNorm(row, ["imagem", "imagens", "foto", "fotos"]) || "").split(/\r?\n|,\s*(?=https?:\/\/)/).map(s => s.trim()).filter(Boolean)
   };
 }
-const ENCOMENDA_FALLBACK_HEADERS = ["ID", "Nome do Produto", "Versão", "Temporada", "Preço de Venda (R$)", "Imagem"];
+const ENCOMENDA_FALLBACK_HEADERS = ["ID", "Nome do Produto", "Categoria", "Versão", "Temporada", "Preço de Venda (R$)", "Imagem"];
 function encomendaToSheetRow(p, headers) {
   const data = {};
   headers.forEach(h => {
     const n = normKey(h);
     if (n === "id") return;
-    if (n.startsWith("nome")) data[h] = p.nome;else if (n.startsWith("versao")) data[h] = p.versao;else if (n.startsWith("temporada")) data[h] = p.temporada;else if (n.startsWith("preco")) data[h] = p.preco;else if (n.startsWith("imagem") || n.startsWith("foto")) data[h] = (p.imagens || []).join("\n");
+    if (n.startsWith("nome")) data[h] = p.nome;else if (n.startsWith("categoria")) data[h] = p.categoria || "";else if (n.startsWith("versao")) data[h] = p.versao;else if (n.startsWith("temporada")) data[h] = p.temporada;else if (n.startsWith("preco")) data[h] = p.preco;else if (n.startsWith("imagem") || n.startsWith("foto")) data[h] = (p.imagens || []).join("\n");
   });
   return data;
 }
@@ -985,6 +986,7 @@ const emptyProduct = {
 };
 const emptyEncomenda = {
   nome: "",
+  categoria: "",
   versao: "",
   temporada: "",
   preco: "",
@@ -1461,6 +1463,7 @@ function ControleEstoque() {
   function openEditEncomenda(item) {
     setEncForm({
       nome: item.nome,
+      categoria: item.categoria || "",
       versao: item.versao || "",
       temporada: item.temporada || "",
       preco: item.preco,
@@ -1486,6 +1489,7 @@ function ControleEstoque() {
     }
     const clean = {
       nome: encForm.nome.trim(),
+      categoria: (encForm.categoria || "").trim(),
       versao: encForm.versao.trim(),
       temporada: encForm.temporada.trim(),
       preco: Number(encForm.preco) || 0,
@@ -3106,6 +3110,26 @@ function ControleEstoque() {
     placeholder: "Ex: Camisa Retrô França 98",
     required: true
   })), /*#__PURE__*/React.createElement("div", {
+    className: "est-field"
+  }, /*#__PURE__*/React.createElement("label", null, "Categoria"), /*#__PURE__*/React.createElement("select", {
+    value: encForm.categoria || "",
+    onChange: e => setEncForm(f => ({
+      ...f,
+      categoria: e.target.value
+    }))
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "Selecione…"), /*#__PURE__*/React.createElement("option", {
+    value: "Futebol"
+  }, "Futebol"), /*#__PURE__*/React.createElement("option", {
+    value: "NBA"
+  }, "NBA"), /*#__PURE__*/React.createElement("option", {
+    value: "Boné"
+  }, "Boné"), /*#__PURE__*/React.createElement("option", {
+    value: "Perfume"
+  }, "Perfume")), /*#__PURE__*/React.createElement("div", {
+    className: "est-dica"
+  }, "Define em qual aba o item aparece no catálogo.")), /*#__PURE__*/React.createElement("div", {
     className: "est-row2"
   }, /*#__PURE__*/React.createElement("div", {
     className: "est-field"
