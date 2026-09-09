@@ -797,6 +797,14 @@ function CatalogoPublico() {
         }
         .cat-cats button.on { background: var(--rust); border-color: var(--rust); color: #17130B; font-weight: 600; }
         .cat-cats-qtd { font-size: 11px; opacity: 0.7; font-family: 'IBM Plex Mono', monospace; }
+        .cat-price-enc { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+        /* barra transversal atravessando o valor de referência */
+        .cat-price-riscado { position: relative; color: var(--ink-soft); }
+        .cat-price-riscado::after {
+          content: ""; position: absolute; left: -3%; right: -3%; top: 52%;
+          height: 2px; background: var(--rust); opacity: .9; transform: rotate(-7deg);
+        }
+        .cat-price-obs { font-family: 'IBM Plex Sans', sans-serif; font-size: 12px; font-weight: 500; color: var(--rust); }
         .cat-tamanhos { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 2px; }
         .cat-tamanhos button {
           min-width: 36px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line);
@@ -837,6 +845,7 @@ function CatalogoPublico() {
         .cat-lb-info { width: 100%; max-width: 620px; text-align: center; padding: 14px 4px 4px; }
         .cat-lb-nome { font-weight: 600; font-size: 15.5px; color: var(--ink); }
         .cat-lb-preco { font-family: 'IBM Plex Mono', monospace; font-size: 17px; color: var(--rust); margin-top: 3px; }
+        .cat-lb-preco-enc { display: flex; align-items: baseline; justify-content: center; gap: 9px; flex-wrap: wrap; }
         .cat-lb-pontos { display: flex; justify-content: center; gap: 7px; margin: 12px 0 4px; }
         .cat-lb-pontos span { width: 8px; height: 8px; border-radius: 50%; background: var(--line); cursor: pointer; }
         .cat-lb-pontos span.on { background: var(--rust); }
@@ -849,6 +858,7 @@ function CatalogoPublico() {
           .cat-lb-pontos span { width: 2.2vw; height: 2.2vw; }
           .cat-cats button { font-size: 3.4vw; padding: 2.2vw 3.8vw; }
           .cat-cats-qtd { font-size: 2.8vw; }
+          .cat-price-obs { font-size: 3vw; }
           .cat-tamanhos button { font-size: 3.4vw; padding: 1.8vw 3vw; min-width: 9vw; }
         }
       `), /*#__PURE__*/React.createElement("div", {
@@ -966,7 +976,13 @@ function CatalogoPublico() {
           [g.id]: pil.variante.id
         }))
       }, pil.tamanho);
-    })), !p.sobEncomenda && /*#__PURE__*/React.createElement("div", {
+    })), p.sobEncomenda ? Number(p.preco) > 0 && /*#__PURE__*/React.createElement("div", {
+      className: "cat-price cat-price-enc"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "cat-price-riscado"
+    }, BRL(p.preco)), /*#__PURE__*/React.createElement("span", {
+      className: "cat-price-obs"
+    }, "valor sob consulta")) : /*#__PURE__*/React.createElement("div", {
       className: "cat-price"
     }, BRL(p.preco)), p.sobEncomenda ? /*#__PURE__*/React.createElement("span", {
       className: "cat-badge cat-badge-encomenda"
@@ -1015,7 +1031,13 @@ function CatalogoPublico() {
     onClick: e => e.stopPropagation()
   }, /*#__PURE__*/React.createElement("div", {
     className: "cat-lb-nome"
-  }, lightbox.produto.nome), /*#__PURE__*/React.createElement("div", {
+  }, lightbox.produto.nome), lightbox.produto.sobEncomenda ? Number(lightbox.produto.preco) > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "cat-lb-preco cat-lb-preco-enc"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "cat-price-riscado"
+  }, BRL(lightbox.produto.preco)), /*#__PURE__*/React.createElement("span", {
+    className: "cat-price-obs"
+  }, "valor sob consulta")) : /*#__PURE__*/React.createElement("div", {
     className: "cat-lb-preco"
   }, BRL(lightbox.produto.preco)), lightbox.produto.imagens.length > 1 && /*#__PURE__*/React.createElement("div", {
     className: "cat-lb-pontos"
