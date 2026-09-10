@@ -407,6 +407,22 @@ const Images = p => /*#__PURE__*/React.createElement(Icon, p, /*#__PURE__*/React
 }), /*#__PURE__*/React.createElement("path", {
   d: "M3 7v12a2 2 0 0 0 2 2h12"
 }));
+const Filtros = p => /*#__PURE__*/React.createElement(Icon, p, /*#__PURE__*/React.createElement("line", {
+  x1: "4",
+  y1: "6",
+  x2: "20",
+  y2: "6"
+}), /*#__PURE__*/React.createElement("line", {
+  x1: "7",
+  y1: "12",
+  x2: "17",
+  y2: "12"
+}), /*#__PURE__*/React.createElement("line", {
+  x1: "10",
+  y1: "18",
+  x2: "14",
+  y2: "18"
+}));
 
 // URL do mesmo Google Apps Script do app de estoque — aqui só fazemos leitura (GET),
 // então essa página nunca altera nada na planilha.
@@ -645,6 +661,35 @@ function ehDaCategoria(produto, alvo) {
   const nome = normKey(produto.nome || "");
   return alvo.termos.some(t => nome.includes(t));
 }
+
+// Facetas do painel de filtros. Cada uma sai de um campo que já existe na
+// planilha, então nada precisa ser recadastrado.
+const FACETAS = [{
+  id: "tamanho",
+  rotulo: "Tamanho",
+  campo: "tamanho"
+}, {
+  id: "campeonato",
+  rotulo: "Campeonato / Liga",
+  campo: "campeonato"
+}, {
+  id: "versao",
+  rotulo: "Versão",
+  campo: "versao"
+}, {
+  id: "genero",
+  rotulo: "Gênero",
+  campo: "genero"
+}];
+const FILTROS_VAZIOS = {
+  tamanho: [],
+  campeonato: [],
+  versao: [],
+  genero: []
+};
+function contarFiltros(filtros) {
+  return Object.values(filtros).reduce((s, v) => s + v.length, 0);
+}
 function combinaCategoria(produto, idCategoria) {
   if (idCategoria === "todos") return true;
   if (idCategoria === "diversos") {
@@ -662,6 +707,9 @@ function CatalogoPublico() {
   const [view, setView] = useState("disponivel"); // "disponivel" | "encomenda"
   const [lightbox, setLightbox] = useState(null); // { produto, indice }
   const [categoria, setCategoria] = useState("todos");
+  const [filtros, setFiltros] = useState(FILTROS_VAZIOS);
+  const [ordem, setOrdem] = useState("padrao");
+  const [painelFiltros, setPainelFiltros] = useState(false);
   const toqueX = useRef(null);
   useEffect(() => {
     fetch(GAS_URL).then(res => res.json()).then(raw => {
@@ -695,10 +743,76 @@ function CatalogoPublico() {
       (p.versao || "").toLowerCase().includes(q);
     });
   }, [disponiveis, search, categoria]);
-  const grupos = useMemo(() => agruparPorTamanho(filtrados), [filtrados]);
+
+  // Opções do painel, tiradas do que existe de fato na aba e categoria atuais.
+  // Assim o cliente nunca escolhe um filtro que devolve lista vazia.
+  const opcoesFiltro = useMemo(() => {
+    const mapa = {};
+    FACETAS.forEach(f => {
+      mapa[f.id] = new Map();
+    });
+    filtrados.forEach(p => {
+      if (Number(p.estoque) <= 0 && !p.sobEncomenda) return;
+      FACETAS.forEach(f => {
+        let valor = String(p[f.campo] || "").trim();
+        if (!valor) return;
+        if (f.id === "tamanho") valor = canonTamanho(valor);
+        mapa[f.id].set(valor, (mapa[f.id].get(valor) || 0) + 1);
+      });
+    });
+    const saida = {};
+    FACETAS.forEach(f => {
+      let lista = Array.from(mapa[f.id].entries()).map(([valor, qtd]) => ({
+        valor,
+        qtd
+      }));
+      if (f.id === "tamanho") lista.sort((a, b) => posicaoTamanho(a.valor) - posicaoTamanho(b.valor));else lista.sort((a, b) => b.qtd - a.qtd || a.valor.localeCompare(b.valor));
+      saida[f.id] = lista;
+    });
+    return saida;
+  }, [filtrados]);
+
+  // Campeonato, versão e gênero valem por linha; tamanho é tratado depois,
+  // no nível do modelo, porque um card reúne vários tamanhos.
+  const filtradosPorFaceta = useMemo(() => {
+    const ativos = FACETAS.filter(f => f.id !== "tamanho" && filtros[f.id].length);
+    if (!ativos.length) return filtrados;
+    return filtrados.filter(p => ativos.every(f => filtros[f.id].includes(String(p[f.campo] || "").trim())));
+  }, [filtrados, filtros]);
+  const grupos = useMemo(() => {
+    let lista = agruparPorTamanho(filtradosPorFaceta);
+
+    // Tamanho: o modelo entra se tiver ao menos um dos tamanhos escolhidos
+    // COM estoque — de nada adianta aparecer se o G está esgotado.
+    if (filtros.tamanho.length) {
+      lista = lista.filter(g => g.variantes.some(v => Number(v.estoque) > 0 && filtros.tamanho.includes(canonTamanho(v.tamanho))));
+    }
+    if (ordem === "menor" || ordem === "maior") {
+      const preco = g => {
+        const disp = g.variantes.filter(v => Number(v.estoque) > 0);
+        const base = (disp.length ? disp : g.variantes).map(v => Number(v.preco) || 0);
+        return Math.min(...base);
+      };
+      lista = lista.slice().sort((a, b) => ordem === "menor" ? preco(a) - preco(b) : preco(b) - preco(a));
+    } else if (ordem === "nome") {
+      lista = lista.slice().sort((a, b) => a.base.nome.localeCompare(b.base.nome, "pt-BR"));
+    }
+    return lista;
+  }, [filtradosPorFaceta, filtros.tamanho, ordem]);
+
   // Base agrupada só para os contadores das abas: conta modelos (cards),
   // não linhas da planilha, e já ignora o que está totalmente esgotado.
   const gruposBase = useMemo(() => agruparPorTamanho(disponiveis), [disponiveis]);
+  function alternarFiltro(faceta, valor) {
+    setFiltros(f => {
+      const atual = f[faceta];
+      return {
+        ...f,
+        [faceta]: atual.includes(valor) ? atual.filter(v => v !== valor) : [...atual, valor]
+      };
+    });
+  }
+  const totalFiltros = contarFiltros(filtros);
 
   // Tamanho escolhido em cada card (por id de grupo)
   const [escolhas, setEscolhas] = useState({});
@@ -787,6 +901,68 @@ function CatalogoPublico() {
         .cat-toggle { display: flex; gap: 6px; background: var(--panel); padding: 4px; border-radius: 10px; border: 1px solid var(--line); margin-bottom: 16px; max-width: 360px; }
         .cat-toggle button { flex: 1; padding: 9px 6px; border: none; background: transparent; border-radius: 7px; font-size: 13.5px; font-weight: 500; cursor: pointer; color: var(--ink-soft); font-family: inherit; }
         .cat-toggle button.active { background: var(--sage-bg); color: var(--sage); }
+        .cat-barra { display: flex; gap: 8px; margin-bottom: 12px; }
+        .cat-filtro-btn {
+          display: flex; align-items: center; gap: 7px; padding: 9px 15px; border-radius: 10px;
+          border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+          font-family: inherit; font-size: 14px; font-weight: 500; cursor: pointer;
+        }
+        .cat-filtro-btn.on { border-color: var(--rust); color: var(--rust); }
+        .cat-filtro-num {
+          background: var(--rust); color: #17130B; font-size: 11px; font-weight: 700;
+          min-width: 18px; height: 18px; border-radius: 999px; display: flex;
+          align-items: center; justify-content: center; padding: 0 5px;
+        }
+        .cat-ordem {
+          flex: 1; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line);
+          background: var(--panel); color: var(--ink); font-family: inherit; font-size: 14px; cursor: pointer;
+        }
+
+        .cat-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+        .cat-chip {
+          display: flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 999px;
+          border: 1px solid var(--rust); background: rgba(217,169,59,0.12); color: var(--rust);
+          font-family: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer;
+        }
+        .cat-chip-limpar {
+          padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line);
+          background: transparent; color: var(--ink-soft); font-family: inherit;
+          font-size: 12.5px; cursor: pointer;
+        }
+
+        /* painel desliza de baixo: no celular, o polegar alcança */
+        .cat-painel-fundo { position: fixed; inset: 0; background: rgba(6,5,4,.7); z-index: 60; display: flex; align-items: flex-end; }
+        .cat-painel {
+          background: var(--panel); width: 100%; max-height: 82vh; border-radius: 18px 18px 0 0;
+          border-top: 1px solid var(--line); display: flex; flex-direction: column;
+        }
+        .cat-painel-topo {
+          display: flex; align-items: center; justify-content: space-between;
+          padding: 16px 18px 12px; border-bottom: 1px solid var(--line); font-size: 16px;
+        }
+        .cat-painel-topo button { background: transparent; border: none; color: var(--ink-soft); cursor: pointer; padding: 4px; }
+        .cat-painel-corpo { overflow-y: auto; padding: 4px 18px 10px; }
+        .cat-faceta { padding: 14px 0; border-bottom: 1px solid var(--line); }
+        .cat-faceta:last-child { border-bottom: none; }
+        .cat-faceta-titulo { font-size: 12px; font-weight: 600; letter-spacing: .5px; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 10px; }
+        .cat-faceta-ops { display: flex; flex-wrap: wrap; gap: 7px; }
+        .cat-faceta-ops button {
+          display: flex; align-items: center; gap: 6px; padding: 8px 13px; border-radius: 999px;
+          border: 1px solid var(--line); background: var(--panel2); color: var(--ink);
+          font-family: inherit; font-size: 13.5px; cursor: pointer;
+        }
+        .cat-faceta-ops button span { font-size: 11px; color: var(--ink-soft); font-family: 'IBM Plex Mono', monospace; }
+        .cat-faceta-ops button.on { background: var(--rust); border-color: var(--rust); color: #17130B; font-weight: 600; }
+        .cat-faceta-ops button.on span { color: rgba(23,19,11,.65); }
+        .cat-painel-rodape { display: flex; gap: 10px; padding: 12px 18px 18px; border-top: 1px solid var(--line); }
+        .cat-painel-limpar {
+          padding: 13px 20px; border-radius: 11px; border: 1px solid var(--line);
+          background: transparent; color: var(--ink-soft); font-family: inherit; font-size: 15px; cursor: pointer;
+        }
+        .cat-painel-ok {
+          flex: 1; padding: 13px; border-radius: 11px; border: none; background: var(--rust);
+          color: #17130B; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer;
+        }
         .cat-cats { display: flex; gap: 7px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 16px; -webkit-overflow-scrolling: touch; }
         .cat-cats::-webkit-scrollbar { display: none; }
         .cat-cats button {
@@ -855,6 +1031,11 @@ function CatalogoPublico() {
           .cat-lb-nome { font-size: 4vw; }
           .cat-lb-preco { font-size: 4.4vw; }
           .cat-lb-pontos span { width: 2.2vw; height: 2.2vw; }
+          .cat-filtro-btn, .cat-ordem { font-size: 3.6vw; padding: 2.5vw 3.5vw; }
+          .cat-chip, .cat-chip-limpar { font-size: 3.2vw; padding: 1.4vw 2.8vw; }
+          .cat-faceta-ops button { font-size: 3.4vw; padding: 2.2vw 3.4vw; }
+          .cat-faceta-titulo { font-size: 3vw; }
+          .cat-painel-ok, .cat-painel-limpar { font-size: 3.8vw; padding: 3.4vw 5vw; }
           .cat-cats button { font-size: 3.4vw; padding: 2.2vw 3.8vw; }
           .cat-cats-qtd { font-size: 2.8vw; }
 
@@ -887,11 +1068,17 @@ function CatalogoPublico() {
   }, /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: view === "disponivel" ? "active" : "",
-    onClick: () => setView("disponivel")
+    onClick: () => {
+      setView("disponivel");
+      setFiltros(FILTROS_VAZIOS);
+    }
   }, "Disponível"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: view === "encomenda" ? "active" : "",
-    onClick: () => setView("encomenda")
+    onClick: () => {
+      setView("encomenda");
+      setFiltros(FILTROS_VAZIOS);
+    }
   }, "Sob encomenda")), /*#__PURE__*/React.createElement("div", {
     className: "cat-search"
   }, /*#__PURE__*/React.createElement(Search, {
@@ -901,6 +1088,41 @@ function CatalogoPublico() {
     value: search,
     onChange: e => setSearch(e.target.value)
   })), /*#__PURE__*/React.createElement("div", {
+    className: "cat-barra"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: `cat-filtro-btn ${totalFiltros ? "on" : ""}`,
+    onClick: () => setPainelFiltros(true)
+  }, /*#__PURE__*/React.createElement(Filtros, {
+    size: 15
+  }), " Filtros", totalFiltros > 0 && /*#__PURE__*/React.createElement("span", {
+    className: "cat-filtro-num"
+  }, totalFiltros)), /*#__PURE__*/React.createElement("select", {
+    className: "cat-ordem",
+    value: ordem,
+    onChange: e => setOrdem(e.target.value)
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "padrao"
+  }, "Ordenar"), /*#__PURE__*/React.createElement("option", {
+    value: "menor"
+  }, "Menor preço"), /*#__PURE__*/React.createElement("option", {
+    value: "maior"
+  }, "Maior preço"), /*#__PURE__*/React.createElement("option", {
+    value: "nome"
+  }, "Nome A–Z"))), totalFiltros > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "cat-chips"
+  }, FACETAS.flatMap(f => filtros[f.id].map(v => /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "cat-chip",
+    key: f.id + v,
+    onClick: () => alternarFiltro(f.id, v)
+  }, v, " ", /*#__PURE__*/React.createElement(X, {
+    size: 11
+  })))), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "cat-chip-limpar",
+    onClick: () => setFiltros(FILTROS_VAZIOS)
+  }, "Limpar tudo")), /*#__PURE__*/React.createElement("div", {
     className: "cat-cats"
   }, CATEGORIAS.map(cat => {
     const qtd = cat.id === "todos" ? gruposBase.length : gruposBase.filter(g => combinaCategoria(g.base, cat.id)).length;
@@ -991,7 +1213,49 @@ function CatalogoPublico() {
     }, /*#__PURE__*/React.createElement(MessageCircle, {
       size: 14
     }), " ", p.sobEncomenda ? "Envie sua mensagem" : "Pedir pelo WhatsApp")));
-  })))), lightbox && /*#__PURE__*/React.createElement("div", {
+  })))), painelFiltros && /*#__PURE__*/React.createElement("div", {
+    className: "cat-painel-fundo",
+    onClick: () => setPainelFiltros(false)
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "cat-painel",
+    onClick: e => e.stopPropagation()
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "cat-painel-topo"
+  }, /*#__PURE__*/React.createElement("strong", null, "Filtrar"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => setPainelFiltros(false),
+    "aria-label": "Fechar"
+  }, /*#__PURE__*/React.createElement(X, {
+    size: 18
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "cat-painel-corpo"
+  }, FACETAS.map(f => {
+    const opcoes = opcoesFiltro[f.id] || [];
+    if (!opcoes.length) return null;
+    return /*#__PURE__*/React.createElement("div", {
+      className: "cat-faceta",
+      key: f.id
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "cat-faceta-titulo"
+    }, f.rotulo), /*#__PURE__*/React.createElement("div", {
+      className: "cat-faceta-ops"
+    }, opcoes.map(o => /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      key: o.valor,
+      className: filtros[f.id].includes(o.valor) ? "on" : "",
+      onClick: () => alternarFiltro(f.id, o.valor)
+    }, o.valor, " ", /*#__PURE__*/React.createElement("span", null, o.qtd)))));
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "cat-painel-rodape"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "cat-painel-limpar",
+    onClick: () => setFiltros(FILTROS_VAZIOS)
+  }, "Limpar"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "cat-painel-ok",
+    onClick: () => setPainelFiltros(false)
+  }, "Ver ", grupos.length, " produto", grupos.length === 1 ? "" : "s")))), lightbox && /*#__PURE__*/React.createElement("div", {
     className: "cat-lb",
     onClick: () => setLightbox(null)
   }, /*#__PURE__*/React.createElement("button", {
