@@ -638,7 +638,7 @@ const CATEGORIAS = [{
   termos: ["bone"]
 }, {
   id: "perfume",
-  rotulo: "Perfume",
+  rotulo: "Perfumes",
   termos: ["perfume"]
 },
 // "Diversos" não tem termos: recolhe tudo que não coube em nenhuma aba,
@@ -812,6 +812,14 @@ function CatalogoPublico() {
       };
     });
   }
+
+  // Se a categoria escolhida ficar sem nenhum item (estoque acabou, ou a aba
+  // mudou), voltamos para "Todos" em vez de mostrar uma tela vazia.
+  useEffect(() => {
+    if (categoria === "todos" || !loaded) return;
+    const temAlgum = gruposBase.some(g => combinaCategoria(g.base, categoria));
+    if (!temAlgum) setCategoria("todos");
+  }, [categoria, gruposBase, loaded]);
   const totalFiltros = contarFiltros(filtros);
 
   // Tamanho escolhido em cada card (por id de grupo)
@@ -1096,6 +1104,7 @@ function CatalogoPublico() {
     onClick: () => {
       setView("disponivel");
       setFiltros(FILTROS_VAZIOS);
+      setCategoria("todos");
     }
   }, "Disponível"), /*#__PURE__*/React.createElement("button", {
     type: "button",
@@ -1103,6 +1112,7 @@ function CatalogoPublico() {
     onClick: () => {
       setView("encomenda");
       setFiltros(FILTROS_VAZIOS);
+      setCategoria("futebol");
     }
   }, "Sob encomenda")), /*#__PURE__*/React.createElement("div", {
     className: "cat-search"
@@ -1149,7 +1159,7 @@ function CatalogoPublico() {
     onClick: () => setFiltros(FILTROS_VAZIOS)
   }, "Limpar tudo")), /*#__PURE__*/React.createElement("div", {
     className: "cat-cats"
-  }, CATEGORIAS.map(cat => {
+  }, (view === "encomenda" ? [...CATEGORIAS.filter(c => c.id !== "todos"), CATEGORIAS.find(c => c.id === "todos")] : CATEGORIAS).map(cat => {
     const qtd = cat.id === "todos" ? gruposBase.length : gruposBase.filter(g => combinaCategoria(g.base, cat.id)).length;
     if (qtd === 0 && cat.id !== "todos" && categoria !== cat.id) return null;
     return /*#__PURE__*/React.createElement("button", {
