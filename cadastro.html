@@ -415,7 +415,7 @@ function productToSheetRow(p, headers) {
   headers.forEach(h => {
     const n = normKey(h);
     if (n === "id") return;
-    if (n.startsWith("nome")) data[h] = p.nome;else if (n.startsWith("tamanho")) data[h] = p.tamanho;else if (n.startsWith("categoria")) data[h] = p.categoria;else if (n.startsWith("versao")) data[h] = p.versao;else if (n.startsWith("campeonato") || n.startsWith("liga")) data[h] = p.campeonato;else if (n.startsWith("genero")) data[h] = p.genero;else if (n.startsWith("temporada")) data[h] = p.temporada;else if (n.startsWith("custo")) data[h] = p.custo;else if (n.startsWith("preco")) data[h] = p.preco;else if (n.startsWith("estoque min")) data[h] = p.estoqueMinimo;else if (n.startsWith("estoque")) data[h] = p.estoque;else if (n.startsWith("imagem") || n.startsWith("foto")) data[h] = (p.imagens || []).join("\n");
+    if (n.startsWith("nome")) data[h] = p.nome;else if (n.startsWith("tamanho")) data[h] = p.tamanho;else if (n.startsWith("categoria")) data[h] = p.categoria;else if (n.startsWith("versao")) data[h] = p.versao;else if (n.startsWith("campeonato") || n.startsWith("liga")) data[h] = p.campeonato;else if (n.startsWith("local") || n.startsWith("regiao")) data[h] = p.local || "";else if (n.startsWith("genero")) data[h] = p.genero;else if (n.startsWith("temporada")) data[h] = p.temporada;else if (n.startsWith("custo")) data[h] = p.custo;else if (n.startsWith("preco")) data[h] = p.preco;else if (n.startsWith("estoque min")) data[h] = p.estoqueMinimo;else if (n.startsWith("estoque")) data[h] = p.estoque;else if (n.startsWith("imagem") || n.startsWith("foto")) data[h] = (p.imagens || []).join("\n");
   });
   return data;
 }
@@ -705,6 +705,7 @@ const emptyForm = {
   nome: "",
   tamanho: "",
   qtdPorTamanho: {},
+  local: "",
   marca: "",
   volume: "",
   margem: String(MARGEM_PADRAO),
@@ -983,6 +984,9 @@ function CadastroProduto() {
       margem: margemPeloPreco(f.custo, valor).toFixed(1)
     }));
   }
+
+  // Sugere os locais já usados, para manter a escrita padronizada.
+  const locaisConhecidos = Array.from(new Set(rawProducts.map(r => String(pickByNorm(r, ["local", "regiao"]) || "").trim()).filter(Boolean))).sort();
   async function salvar(e) {
     e.preventDefault();
     if (!form.nome.trim()) {
@@ -1029,6 +1033,8 @@ function CadastroProduto() {
           categoria: form.categoria.trim(),
           versao: form.versao.trim(),
           campeonato: form.campeonato.trim(),
+          local: (form.local || "").trim(),
+          local: (form.local || "").trim(),
           genero: form.genero,
           temporada: form.temporada.trim(),
           custo: Number(form.custo) || 0,
@@ -1470,6 +1476,21 @@ function CadastroProduto() {
     })),
     placeholder: "Brasileirão"
   })), /*#__PURE__*/React.createElement("div", {
+    className: "cad-field"
+  }, /*#__PURE__*/React.createElement("label", null, "Local"), /*#__PURE__*/React.createElement("input", {
+    list: "cad-locais",
+    value: form.local || "",
+    onChange: e => setForm(f => ({
+      ...f,
+      local: e.target.value
+    })),
+    placeholder: "Brasileirão, Europa…"
+  }), /*#__PURE__*/React.createElement("datalist", {
+    id: "cad-locais"
+  }, locaisConhecidos.map(l => /*#__PURE__*/React.createElement("option", {
+    key: l,
+    value: l
+  })))), /*#__PURE__*/React.createElement("div", {
     className: "cad-field"
   }, /*#__PURE__*/React.createElement("label", null, "Gênero"), /*#__PURE__*/React.createElement("select", {
     value: form.genero,

@@ -483,6 +483,7 @@ function sheetToProduct(row) {
     categoria: String(pickByNorm(row, ["categoria"]) || ""),
     versao: String(pickByNorm(row, ["versao"]) || ""),
     campeonato: String(pickByNorm(row, ["campeonato", "liga"]) || ""),
+    local: String(pickByNorm(row, ["local", "regiao"]) || ""),
     genero: String(pickByNorm(row, ["genero"]) || ""),
     temporada: String(pickByNorm(row, ["temporada"]) || ""),
     preco: Number(pickByNorm(row, ["preco de venda", "preco"])) || 0,
@@ -495,6 +496,7 @@ function sheetToEncomenda(row) {
     id: pickByNorm(row, ["id"]) || Math.random().toString(36),
     nome: String(pickByNorm(row, ["nome do produto", "nome"]) || ""),
     categoria: String(pickByNorm(row, ["categoria"]) || ""),
+    local: String(pickByNorm(row, ["local", "regiao"]) || ""),
     versao: String(pickByNorm(row, ["versao"]) || ""),
     temporada: String(pickByNorm(row, ["temporada"]) || ""),
     preco: Number(pickByNorm(row, ["preco de venda", "preco"])) || 0,
@@ -665,6 +667,10 @@ function ehDaCategoria(produto, alvo) {
 // Facetas do painel de filtros. Cada uma sai de um campo que já existe na
 // planilha, então nada precisa ser recadastrado.
 const FACETAS = [{
+  id: "local",
+  rotulo: "Local",
+  campo: "local"
+}, {
   id: "tamanho",
   rotulo: "Tamanho",
   campo: "tamanho"
@@ -682,6 +688,7 @@ const FACETAS = [{
   campo: "genero"
 }];
 const FILTROS_VAZIOS = {
+  local: [],
   tamanho: [],
   campeonato: [],
   versao: [],
@@ -740,7 +747,7 @@ function CatalogoPublico() {
       if (!q) return true;
       return p.nome.toLowerCase().includes(q) || (p.categoria || "").toLowerCase().includes(q) || (p.campeonato || "").toLowerCase().includes(q) || (p.temporada || "").toLowerCase().includes(q) ||
       // versao guarda a marca no caso dos perfumes
-      (p.versao || "").toLowerCase().includes(q);
+      (p.versao || "").toLowerCase().includes(q) || (p.local || "").toLowerCase().includes(q);
     });
   }, [disponiveis, search, categoria]);
 

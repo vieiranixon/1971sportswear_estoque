@@ -848,6 +848,7 @@ function sheetToProduct(row) {
     categoria: String(pickByNorm(row, ["categoria"]) || ""),
     versao: String(pickByNorm(row, ["versao"]) || ""),
     campeonato: String(pickByNorm(row, ["campeonato", "liga"]) || ""),
+    local: String(pickByNorm(row, ["local", "regiao"]) || ""),
     genero: String(pickByNorm(row, ["genero"]) || ""),
     temporada: String(pickByNorm(row, ["temporada"]) || ""),
     custo: Number(pickByNorm(row, ["custo"])) || 0,
@@ -950,7 +951,7 @@ function productToSheetRow(p, headers) {
   headers.forEach(h => {
     const n = normKey(h);
     if (n === "id") return; // ID vai separado no payload
-    if (n.startsWith("nome")) data[h] = p.nome;else if (n.startsWith("tamanho")) data[h] = p.tamanho;else if (n.startsWith("categoria")) data[h] = p.categoria;else if (n.startsWith("versao")) data[h] = p.versao;else if (n.startsWith("campeonato") || n.startsWith("liga")) data[h] = p.campeonato;else if (n.startsWith("genero")) data[h] = p.genero;else if (n.startsWith("temporada")) data[h] = p.temporada;else if (n.startsWith("custo")) data[h] = p.custo;else if (n.startsWith("preco")) data[h] = p.preco;else if (n.startsWith("estoque min")) data[h] = p.estoqueMinimo;else if (n.startsWith("estoque")) data[h] = p.estoque;else if (n.startsWith("imagem") || n.startsWith("foto")) data[h] = (p.imagens || []).join("\n");
+    if (n.startsWith("nome")) data[h] = p.nome;else if (n.startsWith("tamanho")) data[h] = p.tamanho;else if (n.startsWith("categoria")) data[h] = p.categoria;else if (n.startsWith("versao")) data[h] = p.versao;else if (n.startsWith("campeonato") || n.startsWith("liga")) data[h] = p.campeonato;else if (n.startsWith("local") || n.startsWith("regiao")) data[h] = p.local || "";else if (n.startsWith("genero")) data[h] = p.genero;else if (n.startsWith("temporada")) data[h] = p.temporada;else if (n.startsWith("custo")) data[h] = p.custo;else if (n.startsWith("preco")) data[h] = p.preco;else if (n.startsWith("estoque min")) data[h] = p.estoqueMinimo;else if (n.startsWith("estoque")) data[h] = p.estoque;else if (n.startsWith("imagem") || n.startsWith("foto")) data[h] = (p.imagens || []).join("\n");
   });
   return data;
 }
@@ -1100,6 +1101,10 @@ function ControleEstoque() {
     return products.filter(p => p.nome.toLowerCase().includes(q) || (p.tamanho || "").toLowerCase().includes(q) || (p.categoria || "").toLowerCase().includes(q) || (p.campeonato || "").toLowerCase().includes(q) || (p.genero || "").toLowerCase().includes(q) || (p.temporada || "").toLowerCase().includes(q) || (p.versao || "").toLowerCase().includes(q));
   }, [products, search]);
   const gruposProdutos = useMemo(() => agruparProdutos(filtered), [filtered]);
+
+  // Sugere os locais que você já usou, para não escrever "Europa" de três
+  // jeitos diferentes e virar três filtros no catálogo.
+  const locaisConhecidos = useMemo(() => Array.from(new Set(products.map(p => (p.local || "").trim()).filter(Boolean))).sort(), [products]);
   function openNewProduct() {
     setForm(emptyProduct);
     setModalProduct({});
@@ -1111,6 +1116,7 @@ function ControleEstoque() {
       categoria: p.categoria || "",
       versao: p.versao || "",
       campeonato: p.campeonato || "",
+      local: p.local || "",
       genero: p.genero || "",
       temporada: p.temporada || "",
       custo: p.custo,
@@ -1172,6 +1178,7 @@ function ControleEstoque() {
       categoria: b.categoria || "",
       versao: b.versao || "",
       campeonato: b.campeonato || "",
+      local: b.local || "",
       genero: b.genero || "",
       temporada: b.temporada || "",
       custo: b.custo,
@@ -1198,6 +1205,7 @@ function ControleEstoque() {
           categoria: form.categoria.trim(),
           versao: form.versao.trim(),
           campeonato: form.campeonato.trim(),
+          local: (form.local || "").trim(),
           genero: form.genero,
           temporada: form.temporada.trim(),
           custo: Number(form.custo) || 0,
@@ -1243,6 +1251,7 @@ function ControleEstoque() {
       categoria: form.categoria.trim(),
       versao: form.versao.trim(),
       campeonato: form.campeonato.trim(),
+      local: (form.local || "").trim(),
       genero: form.genero,
       temporada: form.temporada.trim(),
       custo: Number(form.custo) || 0,
@@ -2784,6 +2793,21 @@ function ControleEstoque() {
     })),
     placeholder: "Ex: Brasileirão"
   }))), /*#__PURE__*/React.createElement("div", {
+    className: "est-field"
+  }, /*#__PURE__*/React.createElement("label", null, "Local"), /*#__PURE__*/React.createElement("input", {
+    list: "est-locais",
+    value: form.local || "",
+    onChange: e => setForm(f => ({
+      ...f,
+      local: e.target.value
+    })),
+    placeholder: "Ex: Brasileirão, Europa, Saudita"
+  }), /*#__PURE__*/React.createElement("datalist", {
+    id: "est-locais"
+  }, locaisConhecidos.map(l => /*#__PURE__*/React.createElement("option", {
+    key: l,
+    value: l
+  })))), /*#__PURE__*/React.createElement("div", {
     className: "est-row2"
   }, /*#__PURE__*/React.createElement("div", {
     className: "est-field"
@@ -2948,6 +2972,21 @@ function ControleEstoque() {
     })),
     placeholder: "Ex: Brasileirão"
   }))), /*#__PURE__*/React.createElement("div", {
+    className: "est-field"
+  }, /*#__PURE__*/React.createElement("label", null, "Local"), /*#__PURE__*/React.createElement("input", {
+    list: "est-locais",
+    value: form.local || "",
+    onChange: e => setForm(f => ({
+      ...f,
+      local: e.target.value
+    })),
+    placeholder: "Ex: Brasileirão, Europa, Saudita"
+  }), /*#__PURE__*/React.createElement("datalist", {
+    id: "est-locais"
+  }, locaisConhecidos.map(l => /*#__PURE__*/React.createElement("option", {
+    key: l,
+    value: l
+  })))), /*#__PURE__*/React.createElement("div", {
     className: "est-row2"
   }, /*#__PURE__*/React.createElement("div", {
     className: "est-field"
