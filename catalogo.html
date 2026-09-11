@@ -731,14 +731,33 @@ function CatalogoPublico() {
     ...p,
     sobEncomenda: false
   })), [products]);
-  const itensSobEncomenda = useMemo(() => encomendas.map(e => ({
-    ...e,
-    sobEncomenda: true,
-    estoque: 0,
-    tamanho: "",
-    campeonato: "",
-    genero: ""
-  })), [encomendas]);
+  // Se o item já está pronto na aba de produtos, some da lista de encomenda:
+  // não faz sentido oferecer espera para algo que sai na hora. A comparação é
+  // pelo nome; a versão só desempata quando as duas linhas a preenchem, para
+  // que "Home" pronta não esconda a "Away" sob encomenda.
+  const itensSobEncomenda = useMemo(() => {
+    const prontos = produtosDisponiveis.filter(p => Number(p.estoque) > 0).map(p => ({
+      nome: normKey(p.nome),
+      versao: normKey(p.versao || "")
+    }));
+    return encomendas.filter(e => {
+      const nome = normKey(e.nome);
+      if (!nome) return true;
+      return !prontos.some(p => {
+        if (p.nome !== nome) return false;
+        const vE = normKey(e.versao || "");
+        if (!p.versao || !vE) return true; // sem versão em uma das pontas: considera o mesmo item
+        return p.versao === vE;
+      });
+    }).map(e => ({
+      ...e,
+      sobEncomenda: true,
+      estoque: 0,
+      tamanho: "",
+      campeonato: "",
+      genero: ""
+    }));
+  }, [encomendas, produtosDisponiveis]);
   const disponiveis = view === "encomenda" ? itensSobEncomenda : produtosDisponiveis;
   const filtrados = useMemo(() => {
     const q = search.trim().toLowerCase();
