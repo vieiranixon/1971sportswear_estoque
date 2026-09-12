@@ -545,9 +545,20 @@ function gradeDoModelo(variantes) {
 // As imagens do Drive aceitam um sufixo de largura. Sem ele vem uma versão
 // reduzida; pedindo o tamanho certo, o card fica nítido e a foto ampliada
 // não fica borrada.
+// Link de compartilhamento do Drive (drive.google.com/file/d/ID/view, /open?id=,
+// /uc?id=) NÃO renderiza dentro de <img>: aquela página é HTML, não a imagem.
+// Aqui extraímos o ID e montamos o endereço que serve o arquivo direto.
+function idDoDrive(u) {
+  const m = u.match(/\/file\/d\/([A-Za-z0-9_-]{10,})/) || u.match(/[?&]id=([A-Za-z0-9_-]{10,})/) || u.match(/googleusercontent\.com\/d\/([A-Za-z0-9_-]{10,})/) || u.match(/\/d\/([A-Za-z0-9_-]{10,})/);
+  return m ? m[1] : null;
+}
 function imgURL(url, largura) {
-  const u = String(url || "");
+  const u = String(url || "").trim();
   if (!u) return u;
+  if (u.includes("drive.google.com") || u.includes("googleusercontent.com/d/")) {
+    const id = idDoDrive(u);
+    if (id) return `https://lh3.googleusercontent.com/d/${id}=w${largura}`;
+  }
   if (!u.includes("googleusercontent.com/")) return u;
   return u.replace(/=[swh]\d+(-[a-z0-9]+)*$/i, "") + "=w" + largura;
 }
