@@ -938,6 +938,8 @@ function CatalogoPublico() {
         .cat-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
         .cat-card-img { aspect-ratio: 4/3; background: #FFFFFF; display: flex; align-items: center; justify-content: center; color: var(--ink-soft); overflow: hidden; position: relative; }
         .cat-card-img img { width: 100%; height: 100%; object-fit: contain; display: block; }
+        .cat-card-img.preencher { background: var(--panel); }
+        .cat-card-img.preencher img { object-fit: cover; }
         .cat-photo-count { position: absolute; bottom: 6px; right: 6px; background: rgba(14,12,9,0.75); color: var(--ink); font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 999px; font-family: 'IBM Plex Mono', monospace; }
         .cat-card { cursor: pointer; }
         .cat-card-body { padding: 9px 10px 11px; display: flex; flex-direction: column; gap: 4px; flex: 1; }
@@ -1235,7 +1237,7 @@ function CatalogoPublico() {
         indice: 0
       })
     }, /*#__PURE__*/React.createElement("div", {
-      className: `cat-card-img ${fotos.length ? "clicavel" : ""}`
+      className: `cat-card-img ${fotos.length ? "clicavel" : ""} ${combinaCategoria(p, "perfume") ? "preencher" : ""}`
     }, fotos[0] ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("img", {
       src: imgURL(fotos[0], 800),
       alt: p.nome,
