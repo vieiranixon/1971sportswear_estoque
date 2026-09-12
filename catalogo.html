@@ -708,6 +708,12 @@ const FILTROS_VAZIOS = {
 function contarFiltros(filtros) {
   return Object.values(filtros).reduce((s, v) => s + v.length, 0);
 }
+
+// "Torcedor / Away" vira "Away": no card o que diferencia é o final.
+function curtaVersao(v) {
+  const partes = String(v || "").split("/").map(s => s.trim()).filter(Boolean);
+  return partes.length > 1 ? partes[partes.length - 1] : partes[0] || "";
+}
 function combinaCategoria(produto, idCategoria) {
   if (idCategoria === "todos") return true;
   if (idCategoria === "diversos") {
@@ -869,6 +875,12 @@ function CatalogoPublico() {
     if (p.sobEncomenda) return [p.versao, p.temporada].filter(Boolean).join(" · ");
     return [p.versao, p.campeonato, p.genero, p.temporada].filter(Boolean).join(" · ");
   }
+
+  // No card a versão já aparece no título, então some daqui para não repetir.
+  function metaCard(p) {
+    if (p.sobEncomenda) return [p.temporada].filter(Boolean).join(" · ");
+    return [p.campeonato, p.genero, p.temporada].filter(Boolean).join(" · ");
+  }
   function irPara(passo) {
     setLightbox(lb => {
       if (!lb) return lb;
@@ -936,7 +948,7 @@ function CatalogoPublico() {
         .cat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
         @media (min-width: 620px) { .cat-grid { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; } }
         .cat-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
-        .cat-card-img { aspect-ratio: 4/3; background: #FFFFFF; display: flex; align-items: center; justify-content: center; color: var(--ink-soft); overflow: hidden; position: relative; }
+        .cat-card-img { aspect-ratio: 1/1; background: #FFFFFF; display: flex; align-items: center; justify-content: center; color: var(--ink-soft); overflow: hidden; position: relative; }
         .cat-card-img img { width: 100%; height: 100%; object-fit: contain; display: block; }
         .cat-card-img.preencher { background: var(--panel); }
         .cat-card-img.preencher img { object-fit: cover; }
@@ -1047,6 +1059,8 @@ function CatalogoPublico() {
           content: ""; position: absolute; left: -3%; right: -3%; top: 52%;
           height: 2px; background: var(--rust); opacity: .9; transform: rotate(-7deg);
         }
+        .cat-card-versao { color: var(--rust); font-weight: 600; }
+        .cat-esgotados { align-self: center; font-size: 10.5px; color: var(--ink-soft); opacity: .8; }
         .cat-tamanhos { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 2px; }
         .cat-tamanhos button {
           min-width: 28px; padding: 4px 7px; border-radius: 6px; border: 1px solid var(--line);
@@ -1252,11 +1266,13 @@ function CatalogoPublico() {
       className: "cat-card-body"
     }, /*#__PURE__*/React.createElement("div", {
       className: "cat-card-name"
-    }, p.nome), metaLineCatalogo(p) && /*#__PURE__*/React.createElement("div", {
+    }, p.nome, p.versao && /*#__PURE__*/React.createElement("span", {
+      className: "cat-card-versao"
+    }, " · ", curtaVersao(p.versao))), metaCard(p) && /*#__PURE__*/React.createElement("div", {
       className: "cat-card-meta"
-    }, metaLineCatalogo(p)), !p.sobEncomenda && temTamanhos && /*#__PURE__*/React.createElement("div", {
+    }, metaCard(p)), !p.sobEncomenda && temTamanhos && /*#__PURE__*/React.createElement("div", {
       className: "cat-tamanhos"
-    }, g.pilulas.map(pil => {
+    }, g.pilulas.filter(pil => pil.disponivel).map(pil => {
       const selecionada = pil.variante && pil.variante.id === p.id;
       return /*#__PURE__*/React.createElement("button", {
         key: pil.tamanho,
@@ -1272,7 +1288,12 @@ function CatalogoPublico() {
           }));
         }
       }, pil.tamanho);
-    })), p.sobEncomenda ? Number(p.preco) > 0 && /*#__PURE__*/React.createElement("div", {
+    }), (() => {
+      const esgotados = g.pilulas.filter(pil => !pil.disponivel).length;
+      return esgotados ? /*#__PURE__*/React.createElement("span", {
+        className: "cat-esgotados"
+      }, "+", esgotados, " esgotado", esgotados > 1 ? "s" : "") : null;
+    })()), p.sobEncomenda ? Number(p.preco) > 0 && /*#__PURE__*/React.createElement("div", {
       className: "cat-price cat-price-enc"
     }, /*#__PURE__*/React.createElement("span", {
       className: "cat-price-riscado"
