@@ -709,10 +709,21 @@ function contarFiltros(filtros) {
   return Object.values(filtros).reduce((s, v) => s + v.length, 0);
 }
 
-// "Torcedor / Away" vira "Away": no card o que diferencia é o final.
+// "Torcedor / Away" vira "Torcedor": é o tipo da camisa que o cliente procura
+// primeiro. Se a versão não trouxer esse tipo, usamos o que estiver escrito.
 function curtaVersao(v) {
   const partes = String(v || "").split("/").map(s => s.trim()).filter(Boolean);
-  return partes.length > 1 ? partes[partes.length - 1] : partes[0] || "";
+  if (!partes.length) return "";
+  const tipo = partes.find(p => /^(torcedor|jogador|player|retr[oô])/i.test(normKey(p)));
+  return tipo || partes[partes.length - 1];
+}
+
+// O que sobra da versão (Home, Away, Third…) vai para a linha de detalhe, que
+// é o que diferencia dois cards do mesmo time lado a lado.
+function restoVersao(v) {
+  const partes = String(v || "").split("/").map(s => s.trim()).filter(Boolean);
+  const tipo = curtaVersao(v);
+  return partes.filter(p => p !== tipo).join(" / ");
 }
 function combinaCategoria(produto, idCategoria) {
   if (idCategoria === "todos") return true;
@@ -878,8 +889,8 @@ function CatalogoPublico() {
 
   // No card a versão já aparece no título, então some daqui para não repetir.
   function metaCard(p) {
-    if (p.sobEncomenda) return [p.temporada].filter(Boolean).join(" · ");
-    return [p.campeonato, p.genero, p.temporada].filter(Boolean).join(" · ");
+    if (p.sobEncomenda) return [restoVersao(p.versao), p.temporada].filter(Boolean).join(" · ");
+    return [restoVersao(p.versao), p.campeonato, p.genero, p.temporada].filter(Boolean).join(" · ");
   }
   function irPara(passo) {
     setLightbox(lb => {
