@@ -458,6 +458,20 @@ function pickByNorm(rawObj, patterns) {
 // Perfume vem de uma aba própria, com marca e volume no lugar de tamanho e
 // campeonato. Convertemos para o mesmo formato dos outros itens para que
 // entre na busca, nas categorias e no card sem tratamento especial.
+// Algumas células guardam link de BUSCA (google.com/search?tbm=isch&q=...),
+// que é uma página de resultados, não uma imagem. Descartamos esses para o
+// card mostrar o ícone em vez de uma foto quebrada.
+function ehImagemValida(u) {
+  const s = String(u || "").trim();
+  if (!s || !/^https?:\/\//i.test(s)) return false;
+  if (/[?&]tbm=isch/i.test(s)) return false;
+  if (/google\.[a-z.]+\/search/i.test(s)) return false;
+  if (/bing\.com\/images/i.test(s)) return false;
+  return true;
+}
+function listaImagens(row) {
+  return String(pickByNorm(row, ["imagem", "imagens", "foto", "fotos"]) || "").split(/\r?\n|,\s*(?=https?:\/\/)/).map(s => s.trim()).filter(ehImagemValida);
+}
 function sheetToPerfume(row) {
   const marca = String(pickByNorm(row, ["marca"]) || "");
   const volume = String(pickByNorm(row, ["volume ml", "volume", "ml"]) || "");
@@ -472,7 +486,7 @@ function sheetToPerfume(row) {
     temporada: "",
     preco: Number(pickByNorm(row, ["preco de venda", "preco"])) || 0,
     estoque: Number(pickByNorm(row, ["estoque atual", "estoque"])) || 0,
-    imagens: String(pickByNorm(row, ["imagem", "imagens", "foto", "fotos"]) || "").split(/\r?\n|,\s*(?=https?:\/\/)/).map(s => s.trim()).filter(Boolean)
+    imagens: listaImagens(row)
   };
 }
 function sheetToProduct(row) {
@@ -488,7 +502,7 @@ function sheetToProduct(row) {
     temporada: String(pickByNorm(row, ["temporada"]) || ""),
     preco: Number(pickByNorm(row, ["preco de venda", "preco"])) || 0,
     estoque: Number(pickByNorm(row, ["estoque atual"])) || 0,
-    imagens: String(pickByNorm(row, ["imagem", "imagens", "foto", "fotos"]) || "").split(/\r?\n|,\s*(?=https?:\/\/)/).map(s => s.trim()).filter(Boolean)
+    imagens: listaImagens(row)
   };
 }
 function sheetToEncomenda(row) {
@@ -500,7 +514,7 @@ function sheetToEncomenda(row) {
     versao: String(pickByNorm(row, ["versao"]) || ""),
     temporada: String(pickByNorm(row, ["temporada"]) || ""),
     preco: Number(pickByNorm(row, ["preco de venda", "preco"])) || 0,
-    imagens: String(pickByNorm(row, ["imagem", "imagens", "foto", "fotos"]) || "").split(/\r?\n|,\s*(?=https?:\/\/)/).map(s => s.trim()).filter(Boolean)
+    imagens: listaImagens(row)
   };
 }
 
