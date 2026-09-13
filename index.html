@@ -819,6 +819,16 @@ function resizeImage(file, maxWidth = 1400, quality = 0.88, tirarFundo = false) 
 // espaços/acentos variando ("Versão " / "Versão", "Genêro" / "Gênero",
 // "Estoque Minímo" / "Mínimo"). Em vez de depender da grafia exata,
 // normalizamos removendo acentos/espaços para casar os campos com segurança.
+// Link de BUSCA (google.com/search?tbm=isch=...) é uma página de resultados,
+// não uma imagem: não adianta guardar nem contar como "produto com foto".
+function ehImagemValida(u) {
+  const s = String(u || "").trim();
+  if (!s || !/^https?:\/\//i.test(s)) return false;
+  if (/[?&]tbm=isch/i.test(s)) return false;
+  if (/google\.[a-z.]+\/search/i.test(s)) return false;
+  if (/bing\.com\/images/i.test(s)) return false;
+  return true;
+}
 function normKey(s) {
   return String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
@@ -855,7 +865,7 @@ function sheetToProduct(row) {
     preco: Number(pickByNorm(row, ["preco de venda", "preco"])) || 0,
     estoque: Number(pickByNorm(row, ["estoque atual"])) || 0,
     estoqueMinimo: Number(pickByNorm(row, ["estoque minimo", "estoque min"])) || 0,
-    imagens: String(pickByNorm(row, ["imagem", "imagens", "foto", "fotos"]) || "").split(/\r?\n|,\s*(?=https?:\/\/)/).map(s => s.trim()).filter(Boolean)
+    imagens: String(pickByNorm(row, ["imagem", "imagens", "foto", "fotos"]) || "").split(/\r?\n|,\s*(?=https?:\/\/)/).map(s => s.trim()).filter(ehImagemValida)
   };
 }
 
@@ -890,7 +900,7 @@ function sheetToPerfume(row) {
     preco: Number(pickByNorm(row, ["preco de venda", "preco"])) || 0,
     estoque: Number(pickByNorm(row, ["estoque atual", "estoque"])) || 0,
     estoqueMinimo: Number(pickByNorm(row, ["estoque minimo"])) || 0,
-    imagens: String(pickByNorm(row, ["imagem", "imagens", "foto", "fotos"]) || "").split(/\r?\n|,\s*(?=https?:\/\/)/).map(s => s.trim()).filter(Boolean)
+    imagens: String(pickByNorm(row, ["imagem", "imagens", "foto", "fotos"]) || "").split(/\r?\n|,\s*(?=https?:\/\/)/).map(s => s.trim()).filter(ehImagemValida)
   };
 }
 function perfumeToSheetRow(p, headers) {
@@ -915,7 +925,7 @@ function sheetToEncomenda(row) {
     versao: String(pickByNorm(row, ["versao"]) || ""),
     temporada: String(pickByNorm(row, ["temporada"]) || ""),
     preco: Number(pickByNorm(row, ["preco de venda", "preco"])) || 0,
-    imagens: String(pickByNorm(row, ["imagem", "imagens", "foto", "fotos"]) || "").split(/\r?\n|,\s*(?=https?:\/\/)/).map(s => s.trim()).filter(Boolean)
+    imagens: String(pickByNorm(row, ["imagem", "imagens", "foto", "fotos"]) || "").split(/\r?\n|,\s*(?=https?:\/\/)/).map(s => s.trim()).filter(ehImagemValida)
   };
 }
 const ENCOMENDA_FALLBACK_HEADERS = ["ID", "Nome do Produto", "Categoria", "Versão", "Temporada", "Preço de Venda (R$)", "Imagem"];
