@@ -1139,6 +1139,7 @@ function ControleEstoque() {
     if (!arquivos.length) return;
     setUploadingImg(true);
     let falhas = 0;
+    let motivo = "";
     for (let i = 0; i < arquivos.length; i++) {
       setProgresso({
         atual: i + 1,
@@ -1152,14 +1153,21 @@ function ControleEstoque() {
           mimeType: "image/jpeg",
           filename: uid() + ".jpg"
         });
-        if (res && res.ok && res.url) aoConcluir(res.url);else falhas++;
+        if (res && res.ok && res.url) aoConcluir(res.url);else {
+          falhas++;
+          // guarda o motivo que o servidor devolveu, para mostrar na tela
+          if (res && res.error) motivo = String(res.error);
+        }
       } catch (e) {
         falhas++;
+        if (e && e.message) motivo = e.message;
       }
     }
     setProgresso(null);
     setUploadingImg(false);
-    if (falhas) showToast(`${falhas} de ${arquivos.length} foto(s) não foram enviadas`, "erro");
+    if (falhas) {
+      showToast(motivo ? `${falhas} de ${arquivos.length} foto(s) não foram enviadas — ${motivo}` : `${falhas} de ${arquivos.length} foto(s) não foram enviadas`, "erro");
+    }
   }
   function handleAddImage(fileList) {
     return enviarFotos(fileList, url => setForm(f => ({

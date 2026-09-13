@@ -786,6 +786,7 @@ function CadastroProduto() {
       total: arquivos.length
     });
     let falhas = 0;
+    let motivo = "";
     for (let i = 0; i < arquivos.length; i++) {
       setProgresso({
         atual: i + 1,
@@ -803,15 +804,19 @@ function CadastroProduto() {
           aoConcluirCada(res.url);
         } else {
           falhas++;
+          // guarda o motivo devolvido pelo servidor, para mostrar na tela
+          if (res && res.error) motivo = String(res.error);
         }
       } catch (e) {
         falhas++;
+        if (e && e.message) motivo = e.message;
       }
     }
     setUploadingImg(false);
     setProgresso(null);
     if (falhas === arquivos.length) {
-      showToast(arquivos.length === 1 ? "Não consegui enviar a foto" : "Não consegui enviar as fotos", "erro");
+      const base = arquivos.length === 1 ? "Não consegui enviar a foto" : "Não consegui enviar as fotos";
+      showToast(motivo ? `${base} — ${motivo}` : base, "erro");
     } else if (falhas > 0) {
       showToast(`${arquivos.length - falhas} de ${arquivos.length} fotos enviadas`, "erro");
     } else if (arquivos.length > 1) {
