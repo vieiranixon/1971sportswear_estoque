@@ -1172,11 +1172,21 @@ function CatalogoPublico() {
         }
         .cat-card-versao { color: var(--rust); font-weight: 600; }
         .cat-esgotados { align-self: center; font-size: 10.5px; color: var(--ink-soft); opacity: .8; }
+        /* Card em promoção: borda e brilho na cor da oferta. Numa grade de
+           duas colunas, o cliente precisa distinguir a oferta antes mesmo de
+           ler o preço — a moldura faz isso melhor que qualquer texto. */
+        .cat-card.promo {
+          border-color: var(--danger);
+          box-shadow: 0 0 0 1px rgba(192,57,43,.35), 0 6px 18px -8px rgba(192,57,43,.55);
+        }
+        .cat-card.promo .cat-card-body {
+          background: linear-gradient(180deg, rgba(192,57,43,.09), transparent 62%);
+        }
         /* selo de desconto sobre a foto: é o que puxa o olho na grade */
         .cat-selo-promo {
           position: absolute; top: 7px; left: 7px; z-index: 2;
           background: var(--danger); color: #fff; font-family: 'IBM Plex Mono', monospace;
-          font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 7px;
+          font-size: 11.5px; font-weight: 700; letter-spacing: .3px; padding: 4px 9px; border-radius: 7px;
           box-shadow: 0 2px 8px rgba(0,0,0,.45);
         }
         .cat-price.promo { color: var(--sage); display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
@@ -1374,7 +1384,7 @@ function CatalogoPublico() {
     const fotos = p.imagens && p.imagens.length ? p.imagens : g.variantes.find(v => v.imagens && v.imagens.length)?.imagens || [];
     const temTamanhos = g.pilulas.length > 1 || g.pilulas[0] && g.pilulas[0].tamanho && g.pilulas[0].tamanho !== "Único";
     return /*#__PURE__*/React.createElement("div", {
-      className: "cat-card",
+      className: `cat-card ${p.emPromocao ? "promo" : ""}`,
       key: g.id,
       onClick: () => setLightbox({
         produto: {
@@ -1387,7 +1397,7 @@ function CatalogoPublico() {
       className: `cat-card-img ${fotos.length ? "clicavel" : ""} ${combinaCategoria(p, "perfume") ? "preencher" : ""}`
     }, p.emPromocao && p.desconto > 0 && /*#__PURE__*/React.createElement("span", {
       className: "cat-selo-promo"
-    }, "−", p.desconto, "%"), fotos[0] ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("img", {
+    }, p.desconto, "% OFF"), fotos[0] ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("img", {
       src: imgURL(fotos[0], 800),
       alt: "",
       loading: "lazy",
