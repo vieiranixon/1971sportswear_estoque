@@ -1035,6 +1035,7 @@ function CatalogoPublico() {
         .spin { animation: cat-spin 0.9s linear infinite; }
         @keyframes cat-spin { to { transform: rotate(360deg); } }
         .cat-wrap { max-width: 1100px; margin: 0 auto; }
+        .cat-versao { text-align: center; font-size: 10px; color: #4A4335; padding: 22px 0 10px; letter-spacing: .5px; }
         .cat-header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
         /* topo fixo: trocar de aba ou buscar sem voltar ao início da lista */
         .cat-topo {
@@ -1572,7 +1573,9 @@ function CatalogoPublico() {
     onClick: () => pedirNoWhatsapp(lightbox.produto)
   }, /*#__PURE__*/React.createElement(MessageCircle, {
     size: 14
-  }), " ", lightbox.produto.sobEncomenda ? "Envie sua mensagem" : "Pedir pelo WhatsApp"))));
+  }), " ", lightbox.produto.sobEncomenda ? "Envie sua mensagem" : "Pedir pelo WhatsApp"))), /*#__PURE__*/React.createElement("div", {
+    className: "cat-versao"
+  }, "catálogo 15/09 19:11"));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(/*#__PURE__*/React.createElement(CatalogoPublico, null));
   } catch (err) {
