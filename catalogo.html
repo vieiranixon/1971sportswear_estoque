@@ -472,6 +472,53 @@ function ehImagemValida(u) {
 function listaImagens(row) {
   return String(pickByNorm(row, ["imagem", "imagens", "foto", "fotos"]) || "").split(/\r?\n|,\s*(?=https?:\/\/)/).map(s => s.trim()).filter(ehImagemValida);
 }
+
+// ---------- Promoções ----------
+// A aba é lida de forma tolerante: o vínculo pode ser por ID do produto ou
+// pelo nome, e o valor pode vir como preço promocional OU como desconto em %.
+function sheetToPromocao(row) {
+  const validade = pickByNorm(row, ["validade", "valido ate", "vence em", "data final"]);
+  return {
+    produtoId: String(pickByNorm(row, ["produto id", "id do produto"]) || "").trim(),
+    nome: String(pickByNorm(row, ["nome do produto", "nome", "produto"]) || "").trim(),
+    preco: Number(pickByNorm(row, ["preco promocional", "preco promo", "preco"])) || 0,
+    desconto: Number(pickByNorm(row, ["desconto"])) || 0,
+    validade: validade ? new Date(validade) : null,
+    obs: String(pickByNorm(row, ["observacao", "obs"]) || "").trim()
+  };
+}
+
+// Promoção vencida é ignorada: some sozinha do catálogo no dia seguinte.
+function promoValida(p) {
+  if (!p.validade || isNaN(p.validade.getTime())) return true;
+  const fim = new Date(p.validade);
+  fim.setHours(23, 59, 59, 999);
+  return fim >= new Date();
+}
+
+// Aplica a promoção ao produto, calculando o que faltar: se você informou só
+// o desconto, o preço sai dele; se informou só o preço, o desconto é deduzido.
+function aplicarPromocao(produto, promo) {
+  const precoOriginal = Number(produto.preco) || 0;
+  let precoNovo = Number(promo.preco) || 0;
+  let desconto = Number(promo.desconto) || 0;
+  if (!precoNovo && desconto > 0 && precoOriginal > 0) {
+    precoNovo = precoOriginal * (1 - desconto / 100);
+  }
+  if (!desconto && precoNovo > 0 && precoOriginal > precoNovo) {
+    desconto = (precoOriginal - precoNovo) / precoOriginal * 100;
+  }
+  if (!precoNovo || precoNovo >= precoOriginal) return produto; // nada a destacar
+
+  return {
+    ...produto,
+    preco: precoNovo,
+    precoOriginal: precoOriginal,
+    desconto: Math.round(desconto),
+    promoObs: promo.obs,
+    emPromocao: true
+  };
+}
 function sheetToPerfume(row) {
   const marca = String(pickByNorm(row, ["marca"]) || "");
   const volume = String(pickByNorm(row, ["volume ml", "volume", "ml"]) || "");
@@ -651,6 +698,12 @@ const CATEGORIAS = [{
   id: "todos",
   rotulo: "Todos",
   termos: []
+},
+// "Promoções" não olha categoria: entra quem tem preço promocional ativo
+{
+  id: "promocao",
+  rotulo: "Promoções",
+  termos: []
 }, {
   id: "futebol",
   rotulo: "Futebol",
@@ -741,6 +794,7 @@ function restoVersao(v) {
 }
 function combinaCategoria(produto, idCategoria) {
   if (idCategoria === "todos") return true;
+  if (idCategoria === "promocao") return !!produto.emPromocao;
   if (idCategoria === "diversos") {
     // sobra: não encaixou em nenhuma das abas nomeadas
     return !CATEGORIAS.some(c => c.termos.length && ehDaCategoria(produto, c));
@@ -765,8 +819,22 @@ function CatalogoPublico() {
       const rawProducts = Array.isArray(raw.products) ? raw.products : [];
       const rawEncomendas = Array.isArray(raw.encomendas) ? raw.encomendas : [];
       const rawPerfumes = Array.isArray(raw.perfumes) ? raw.perfumes : [];
-      setProducts([...rawProducts.map(sheetToProduct), ...rawPerfumes.map(sheetToPerfume)]);
-      setEncomendas(rawEncomendas.map(sheetToEncomenda));
+      const rawPromos = Array.isArray(raw.promocoes) ? raw.promocoes : [];
+
+      // índice das promoções: por ID do produto e por nome, para funcionar
+      // com qualquer das duas formas de preencher a aba
+      const porId = new Map();
+      const porNome = new Map();
+      rawPromos.map(sheetToPromocao).filter(promoValida).forEach(pr => {
+        if (pr.produtoId) porId.set(String(pr.produtoId), pr);
+        if (pr.nome) porNome.set(normKey(pr.nome), pr);
+      });
+      const comPromocao = item => {
+        const pr = porId.get(String(item.id)) || porNome.get(normKey(item.nome));
+        return pr ? aplicarPromocao(item, pr) : item;
+      };
+      setProducts([...rawProducts.map(sheetToProduct).map(comPromocao), ...rawPerfumes.map(sheetToPerfume).map(comPromocao)]);
+      setEncomendas(rawEncomendas.map(sheetToEncomenda).map(comPromocao));
     }).catch(() => setErro(true)).finally(() => setLoaded(true));
   }, []);
   const produtosDisponiveis = useMemo(() => products.map(p => ({
@@ -862,6 +930,8 @@ function CatalogoPublico() {
         return Math.min(...base);
       };
       lista = lista.slice().sort((a, b) => ordem === "menor" ? preco(a) - preco(b) : preco(b) - preco(a));
+    } else if (ordem === "desconto") {
+      lista = lista.slice().sort((a, b) => (b.base.desconto || 0) - (a.base.desconto || 0));
     } else if (ordem === "nome") {
       lista = lista.slice().sort((a, b) => a.base.nome.localeCompare(b.base.nome, "pt-BR"));
     }
@@ -1086,6 +1156,18 @@ function CatalogoPublico() {
         }
         .cat-card-versao { color: var(--rust); font-weight: 600; }
         .cat-esgotados { align-self: center; font-size: 10.5px; color: var(--ink-soft); opacity: .8; }
+        /* selo de desconto sobre a foto: é o que puxa o olho na grade */
+        .cat-selo-promo {
+          position: absolute; top: 7px; left: 7px; z-index: 2;
+          background: var(--danger); color: #fff; font-family: 'IBM Plex Mono', monospace;
+          font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 7px;
+          box-shadow: 0 2px 8px rgba(0,0,0,.45);
+        }
+        .cat-price.promo { color: var(--sage); display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+        .cat-price-antigo {
+          font-size: 11.5px; color: var(--ink-soft); text-decoration: line-through; font-weight: 400;
+        }
+        .cat-badge-promo { background: rgba(192,57,43,0.16); color: #E8705F; border: 1px solid rgba(192,57,43,0.4); }
         .cat-tamanhos { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 2px; }
         .cat-tamanhos button {
           min-width: 28px; padding: 4px 7px; border-radius: 6px; border: 1px solid var(--line);
@@ -1126,6 +1208,14 @@ function CatalogoPublico() {
         .cat-lb-info { width: 100%; max-width: 620px; text-align: center; padding: 14px 4px 4px; }
         .cat-lb-nome { font-weight: 600; font-size: 15.5px; color: var(--ink); }
         .cat-lb-meta { font-size: 12.5px; color: var(--ink-soft); margin-top: 4px; line-height: 1.4; }
+        .cat-lb-promo-topo { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 2px; }
+        .cat-selo-promo.estatico { position: static; box-shadow: none; }
+        .cat-lb-preco.promo { color: var(--sage); }
+        .cat-lb-economia {
+          font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; color: var(--sage);
+          font-weight: 600; margin-top: 4px; display: flex; flex-direction: column; gap: 3px;
+        }
+        .cat-lb-economia small { font-size: 11.5px; color: var(--ink-soft); font-weight: 400; }
         .cat-lb-badge { display: flex; justify-content: center; margin-top: 9px; }
         .cat-lb-preco { font-family: 'IBM Plex Mono', monospace; font-size: 17px; color: var(--rust); margin-top: 6px; }
         .cat-lb-preco-enc { display: flex; justify-content: center; }
@@ -1221,6 +1311,8 @@ function CatalogoPublico() {
   }, "Menor preço"), /*#__PURE__*/React.createElement("option", {
     value: "maior"
   }, "Maior preço"), /*#__PURE__*/React.createElement("option", {
+    value: "desconto"
+  }, "Maior desconto"), /*#__PURE__*/React.createElement("option", {
     value: "nome"
   }, "Nome A–Z"))), totalFiltros > 0 && /*#__PURE__*/React.createElement("div", {
     className: "cat-chips"
@@ -1277,7 +1369,9 @@ function CatalogoPublico() {
       })
     }, /*#__PURE__*/React.createElement("div", {
       className: `cat-card-img ${fotos.length ? "clicavel" : ""} ${combinaCategoria(p, "perfume") ? "preencher" : ""}`
-    }, fotos[0] ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("img", {
+    }, p.emPromocao && p.desconto > 0 && /*#__PURE__*/React.createElement("span", {
+      className: "cat-selo-promo"
+    }, "−", p.desconto, "%"), fotos[0] ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("img", {
       src: imgURL(fotos[0], 800),
       alt: "",
       loading: "lazy",
@@ -1326,12 +1420,14 @@ function CatalogoPublico() {
     }, /*#__PURE__*/React.createElement("span", {
       className: "cat-price-riscado"
     }, BRL(p.preco))) : /*#__PURE__*/React.createElement("div", {
-      className: "cat-price"
-    }, BRL(p.preco)), p.sobEncomenda ? /*#__PURE__*/React.createElement("span", {
+      className: `cat-price ${p.emPromocao ? "promo" : ""}`
+    }, p.emPromocao && /*#__PURE__*/React.createElement("span", {
+      className: "cat-price-antigo"
+    }, BRL(p.precoOriginal)), BRL(p.preco)), p.sobEncomenda ? /*#__PURE__*/React.createElement("span", {
       className: "cat-badge cat-badge-encomenda"
     }, "Consulte prazo e valor final") : /*#__PURE__*/React.createElement("span", {
-      className: "cat-badge cat-badge-ok"
-    }, p.estoque, " disponível(is)", p.tamanho ? ` no ${p.tamanho}` : "")));
+      className: `cat-badge ${p.emPromocao ? "cat-badge-promo" : "cat-badge-ok"}`
+    }, p.emPromocao ? "Promoção · até acabar o estoque" : `${p.estoque} disponível(is)${p.tamanho ? ` no ${p.tamanho}` : ""}`)));
   })))), painelFiltros && /*#__PURE__*/React.createElement("div", {
     className: "cat-painel-fundo",
     onClick: () => setPainelFiltros(false)
@@ -1421,8 +1517,16 @@ function CatalogoPublico() {
   }, /*#__PURE__*/React.createElement("span", {
     className: "cat-price-riscado"
   }, BRL(lightbox.produto.preco))) : /*#__PURE__*/React.createElement("div", {
-    className: "cat-lb-preco"
-  }, BRL(lightbox.produto.preco)), lightbox.produto.imagens.length > 1 && /*#__PURE__*/React.createElement("div", {
+    className: `cat-lb-preco ${lightbox.produto.emPromocao ? "promo" : ""}`
+  }, lightbox.produto.emPromocao && /*#__PURE__*/React.createElement("div", {
+    className: "cat-lb-promo-topo"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "cat-price-antigo"
+  }, BRL(lightbox.produto.precoOriginal)), lightbox.produto.desconto > 0 && /*#__PURE__*/React.createElement("span", {
+    className: "cat-selo-promo estatico"
+  }, "−", lightbox.produto.desconto, "%")), BRL(lightbox.produto.preco), lightbox.produto.emPromocao && /*#__PURE__*/React.createElement("div", {
+    className: "cat-lb-economia"
+  }, "Você economiza ", BRL((lightbox.produto.precoOriginal || 0) - lightbox.produto.preco), /*#__PURE__*/React.createElement("small", null, lightbox.produto.promoObs || "Promoção por tempo limitado, até acabar o estoque"))), lightbox.produto.imagens.length > 1 && /*#__PURE__*/React.createElement("div", {
     className: "cat-lb-pontos"
   }, lightbox.produto.imagens.map((_, i) => /*#__PURE__*/React.createElement("span", {
     key: i,
