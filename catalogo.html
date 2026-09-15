@@ -474,6 +474,22 @@ function listaImagens(row) {
 }
 
 // ---------- Promoções ----------
+// O preço promocional fica numa coluna da própria linha do produto
+// ("Promoção (R$)"). Vale quando está preenchido e é MENOR que o preço normal;
+// assim, apagar a célula desliga a promoção, sem mais nenhum passo.
+function comPromocaoDaLinha(item, row) {
+  const promo = Number(pickByNorm(row, ["promocao", "preco promocional", "promo"])) || 0;
+  const normal = Number(item.preco) || 0;
+  if (!promo || !normal || promo >= normal) return item;
+  return {
+    ...item,
+    preco: promo,
+    precoOriginal: normal,
+    desconto: Math.round((normal - promo) / normal * 100),
+    emPromocao: true
+  };
+}
+
 // A aba é lida de forma tolerante: o vínculo pode ser por ID do produto ou
 // pelo nome, e o valor pode vir como preço promocional OU como desconto em %.
 function sheetToPromocao(row) {
@@ -522,7 +538,7 @@ function aplicarPromocao(produto, promo) {
 function sheetToPerfume(row) {
   const marca = String(pickByNorm(row, ["marca"]) || "");
   const volume = String(pickByNorm(row, ["volume ml", "volume", "ml"]) || "");
-  return {
+  return comPromocaoDaLinha({
     id: pickByNorm(row, ["id"]) || Math.random().toString(36),
     nome: String(pickByNorm(row, ["nome", "nome do produto"]) || ""),
     tamanho: "",
@@ -534,10 +550,10 @@ function sheetToPerfume(row) {
     preco: Number(pickByNorm(row, ["preco de venda", "preco"])) || 0,
     estoque: Number(pickByNorm(row, ["estoque atual", "estoque"])) || 0,
     imagens: listaImagens(row)
-  };
+  }, row);
 }
 function sheetToProduct(row) {
-  return {
+  return comPromocaoDaLinha({
     id: pickByNorm(row, ["id"]) || Math.random().toString(36),
     nome: String(pickByNorm(row, ["nome do produto", "nome"]) || ""),
     tamanho: String(pickByNorm(row, ["tamanho"]) || ""),
@@ -550,10 +566,10 @@ function sheetToProduct(row) {
     preco: Number(pickByNorm(row, ["preco de venda", "preco"])) || 0,
     estoque: Number(pickByNorm(row, ["estoque atual"])) || 0,
     imagens: listaImagens(row)
-  };
+  }, row);
 }
 function sheetToEncomenda(row) {
-  return {
+  return comPromocaoDaLinha({
     id: pickByNorm(row, ["id"]) || Math.random().toString(36),
     nome: String(pickByNorm(row, ["nome do produto", "nome"]) || ""),
     categoria: String(pickByNorm(row, ["categoria"]) || ""),
@@ -562,7 +578,7 @@ function sheetToEncomenda(row) {
     temporada: String(pickByNorm(row, ["temporada"]) || ""),
     preco: Number(pickByNorm(row, ["preco de venda", "preco"])) || 0,
     imagens: listaImagens(row)
-  };
+  }, row);
 }
 
 // Ordem em que os tamanhos aparecem no card. Qualquer tamanho fora desta
