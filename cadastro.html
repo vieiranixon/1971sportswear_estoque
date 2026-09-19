@@ -406,6 +406,28 @@ function acharColunaImagem(rawRow) {
 
 // Link de BUSCA (google.com/search?tbm=isch=...) é uma página de resultados,
 // não uma imagem: não adianta guardar nem contar como "produto com foto".
+// Link de compartilhamento do Drive aponta para uma PAGINA, nao para a imagem:
+// dentro de <img> ele falha. Extraimos o ID e montamos o endereco direto.
+function idDoDrive(u) {
+  const m =
+    u.match(/\/file\/d\/([A-Za-z0-9_-]{10,})/) ||
+    u.match(/[?&]id=([A-Za-z0-9_-]{10,})/) ||
+    u.match(/googleusercontent\.com\/d\/([A-Za-z0-9_-]{10,})/) ||
+    u.match(/\/d\/([A-Za-z0-9_-]{10,})/);
+  return m ? m[1] : null;
+}
+
+function imgURL(url, largura) {
+  const u = String(url || "").trim();
+  if (!u) return u;
+  if (u.includes("drive.google.com") || u.includes("googleusercontent.com/d/")) {
+    const id = idDoDrive(u);
+    if (id) return "https://lh3.googleusercontent.com/d/" + id + "=w" + largura;
+  }
+  if (!u.includes("googleusercontent.com/")) return u;
+  return u.replace(/=[swh]\d+(-[a-z0-9]+)*$/i, "") + "=w" + largura;
+}
+
 function ehImagemValida(u) {
   const s = String(u || "").trim();
   if (!s || !/^https?:\/\//i.test(s)) return false;
@@ -631,8 +653,9 @@ function Galeria({
     className: `cad-thumb ${i === 0 ? "capa" : ""}`,
     key: url + i
   }, /*#__PURE__*/React.createElement("img", {
-    src: url,
-    alt: ""
+    src: imgURL(url, 300),
+    alt: "",
+    onError: ev => { ev.currentTarget.style.display = "none"; }
   }), i === 0 && /*#__PURE__*/React.createElement("span", {
     className: "cad-capa"
   }, "CAPA"), /*#__PURE__*/React.createElement("button", {
@@ -1330,8 +1353,9 @@ function CadastroProduto() {
   }, /*#__PURE__*/React.createElement("div", {
     className: "cad-item-thumb"
   }, it.fotos[0] ? /*#__PURE__*/React.createElement("img", {
-    src: it.fotos[0],
-    alt: ""
+    src: imgURL(it.fotos[0], 200),
+    alt: "",
+    onError: ev => { ev.currentTarget.style.display = "none"; }
   }) : /*#__PURE__*/React.createElement(ImagePlus, {
     size: 18
   })), /*#__PURE__*/React.createElement("div", {

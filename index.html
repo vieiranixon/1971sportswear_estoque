@@ -577,8 +577,21 @@ function OpcaoFundoEst({
   }, "Deixar o fundo branco", /*#__PURE__*/React.createElement("small", null, "Funciona com fundo claro e liso.")));
 }
 const ORDEM_TAM_EST = ["16", "18", "20", "22", "24", "26", "28", "P", "M", "G", "GG", "3G", "4G"];
+// O mesmo tamanho aparece escrito de formas diferentes conforme o fornecedor.
+// Unificamos para o nome usado na grade, senao um produto cadastrado como
+// "XGG" ficava sozinho, sem a grade completa. Igual ao catalogo.
+const EQUIV_TAM_EST = {
+  "PP": "P", "XG": "GG", "XGG": "3G", "XXG": "3G",
+  "XXGG": "4G", "XXXG": "4G", "G1": "3G", "G2": "4G"
+};
+
+function canonTamEst(t) {
+  const s = String(t || "").trim().toUpperCase().replace(/\s+/g, "");
+  return EQUIV_TAM_EST[s] || s;
+}
+
 function posTamEst(t) {
-  const i = ORDEM_TAM_EST.indexOf(String(t || "").trim().toUpperCase());
+  const i = ORDEM_TAM_EST.indexOf(canonTamEst(t));
   return i === -1 ? 999 : i;
 }
 
@@ -590,11 +603,14 @@ const GRADE_INFANTIL_EST = ["16", "18", "20", "22", "24", "26", "28"];
 // Descobre a grade do modelo pelos tamanhos já cadastrados, para mostrar
 // também os que ainda não existem na planilha.
 function gradeDoModeloEst(variantes) {
-  const tams = variantes.map(v => String(v.tamanho || "").trim().toUpperCase()).filter(Boolean);
+  const tams = variantes.map(v => canonTamEst(v.tamanho)).filter(Boolean);
   if (tams.length === 0) return null;
-  if (tams.every(t => GRADE_ADULTO_EST.includes(t))) return GRADE_ADULTO_EST;
-  if (tams.every(t => GRADE_INFANTIL_EST.includes(t))) return GRADE_INFANTIL_EST;
-  return null;
+  // basta que os tamanhos conhecidos pertencam a grade: um tamanho fora do
+  // padrao nao impede mais de mostrar a grade inteira
+  const naAdulto = tams.filter(t => GRADE_ADULTO_EST.includes(t)).length;
+  const naInfantil = tams.filter(t => GRADE_INFANTIL_EST.includes(t)).length;
+  if (naAdulto === 0 && naInfantil === 0) return null;
+  return naAdulto >= naInfantil ? GRADE_ADULTO_EST : GRADE_INFANTIL_EST;
 }
 function agruparProdutos(lista) {
   const mapa = new Map();
@@ -614,16 +630,28 @@ function agruparProdutos(lista) {
 
     // Uma linha por tamanho da grade. Onde não existe linha na planilha,
     // a variante fica nula e o ↑ cria a linha na hora.
-    const linhas = grade ? grade.map(t => {
-      const v = variantes.find(x => String(x.tamanho || "").trim().toUpperCase() === t);
-      return {
-        tamanho: t,
-        variante: v || null
-      };
-    }) : variantes.map(v => ({
-      tamanho: v.tamanho || "Único",
-      variante: v
-    }));
+    let linhas;
+    if (grade) {
+      linhas = grade.map(t => {
+        const v = variantes.find(x => canonTamEst(x.tamanho) === t);
+        // mostramos o nome como esta na planilha (XGG continua XGG);
+        // a equivalencia serve so para achar a posicao na grade
+        return {
+          tamanho: v ? v.tamanho || t : t,
+          variante: v || null
+        };
+      });
+      // tamanhos fora da grade (ex: "Único") entram no fim, para nao sumirem
+      variantes.filter(v => v.tamanho && !grade.includes(canonTamEst(v.tamanho))).forEach(v => linhas.push({
+        tamanho: v.tamanho,
+        variante: v
+      }));
+    } else {
+      linhas = variantes.map(v => ({
+        tamanho: v.tamanho || "Único",
+        variante: v
+      }));
+    }
     return {
       ...g,
       variantes,
@@ -653,8 +681,9 @@ function GaleriaEst({
     className: `est-gallery-thumb ${i === 0 ? "capa" : ""}`,
     key: url + i
   }, /*#__PURE__*/React.createElement("img", {
-    src: url,
-    alt: ""
+    src: imgURL(url, 300),
+    alt: "",
+    onError: ev => { ev.currentTarget.style.display = "none"; }
   }), i === 0 && /*#__PURE__*/React.createElement("span", {
     className: "est-capa"
   }, "CAPA"), /*#__PURE__*/React.createElement("button", {
@@ -821,6 +850,29 @@ function resizeImage(file, maxWidth = 1400, quality = 0.88, tirarFundo = false) 
 // normalizamos removendo acentos/espaços para casar os campos com segurança.
 // Link de BUSCA (google.com/search?tbm=isch=...) é uma página de resultados,
 // não uma imagem: não adianta guardar nem contar como "produto com foto".
+// Link de compartilhamento do Drive (drive.google.com/file/d/ID/view) aponta
+// para uma PAGINA, nao para a imagem: dentro de <img> ele falha. Aqui extraimos
+// o ID e montamos o endereco que serve o arquivo direto. Mesma logica do catalogo.
+function idDoDrive(u) {
+  const m =
+    u.match(/\/file\/d\/([A-Za-z0-9_-]{10,})/) ||
+    u.match(/[?&]id=([A-Za-z0-9_-]{10,})/) ||
+    u.match(/googleusercontent\.com\/d\/([A-Za-z0-9_-]{10,})/) ||
+    u.match(/\/d\/([A-Za-z0-9_-]{10,})/);
+  return m ? m[1] : null;
+}
+
+function imgURL(url, largura) {
+  const u = String(url || "").trim();
+  if (!u) return u;
+  if (u.includes("drive.google.com") || u.includes("googleusercontent.com/d/")) {
+    const id = idDoDrive(u);
+    if (id) return "https://lh3.googleusercontent.com/d/" + id + "=w" + largura;
+  }
+  if (!u.includes("googleusercontent.com/")) return u;
+  return u.replace(/=[swh]\d+(-[a-z0-9]+)*$/i, "") + "=w" + largura;
+}
+
 function ehImagemValida(u) {
   const s = String(u || "").trim();
   if (!s || !/^https?:\/\//i.test(s)) return false;
@@ -2161,8 +2213,9 @@ function ControleEstoque() {
     }, /*#__PURE__*/React.createElement("div", {
       className: "est-card-img"
     }, b.imagens && b.imagens[0] ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("img", {
-      src: b.imagens[0],
-      alt: b.nome
+      src: imgURL(b.imagens[0], 400),
+      alt: "",
+      onError: ev => { ev.currentTarget.style.display = "none"; }
     }), b.imagens.length > 1 && /*#__PURE__*/React.createElement("span", {
       className: "est-photo-count"
     }, "+", b.imagens.length - 1)) : /*#__PURE__*/React.createElement(ImagePlus, {
@@ -2373,8 +2426,9 @@ function ControleEstoque() {
   }, /*#__PURE__*/React.createElement("div", {
     className: "est-card-img"
   }, item.imagens && item.imagens[0] ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("img", {
-    src: item.imagens[0],
-    alt: item.nome
+    src: imgURL(item.imagens[0], 400),
+    alt: "",
+    onError: ev => { ev.currentTarget.style.display = "none"; }
   }), item.imagens.length > 1 && /*#__PURE__*/React.createElement("span", {
     className: "est-photo-count"
   }, "+", item.imagens.length - 1)) : /*#__PURE__*/React.createElement(ImagePlus, {
@@ -2427,8 +2481,9 @@ function ControleEstoque() {
     }, /*#__PURE__*/React.createElement("div", {
       className: "est-card-img"
     }, p.imagens && p.imagens[0] ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("img", {
-      src: p.imagens[0],
-      alt: p.nome
+      src: imgURL(p.imagens[0], 400),
+      alt: "",
+      onError: ev => { ev.currentTarget.style.display = "none"; }
     }), p.imagens.length > 1 && /*#__PURE__*/React.createElement("span", {
       className: "est-photo-count"
     }, "+", p.imagens.length - 1)) : /*#__PURE__*/React.createElement(ImagePlus, {
@@ -2543,8 +2598,9 @@ function ControleEstoque() {
   }, /*#__PURE__*/React.createElement("div", {
     className: "est-card-img"
   }, p.imagens && p.imagens[0] ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("img", {
-    src: p.imagens[0],
-    alt: p.nome
+    src: imgURL(p.imagens[0], 400),
+    alt: "",
+    onError: ev => { ev.currentTarget.style.display = "none"; }
   }), p.imagens.length > 1 && /*#__PURE__*/React.createElement("span", {
     className: "est-photo-count"
   }, "+", p.imagens.length - 1)) : /*#__PURE__*/React.createElement(ImagePlus, {
